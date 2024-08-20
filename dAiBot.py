@@ -96,15 +96,8 @@ async def search_youtube(keyword):
         part='id,snippet',
         maxResults=3
     ).execute()
-
-    # 검색 결과 처리
-    results = []
-    for i, item in enumerate(search_response['items'], 1):
-        video_title = item['snippet']['title']
-        video_link = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
-        results.append(f"\n제목: {video_title}\n링크: {video_link}")
     
-    return "\n".join(results)
+    return search_response.get('items', [])
 
 @tree.command(name="뉴스", description="네이버 뉴스를 검색합니다.")
 async def news_command(interaction: discord.Interaction, 키워드: str):
@@ -220,7 +213,16 @@ async def youtube_command(interaction: discord.Interaction, 키워드: str):
             logging.info(f"Searching for keyword: {keyword}")
             
             videos = await search_youtube(keyword)
-            response += f"\n키워드: {keyword}\n{videos}\n\n"
+            
+            if videos:
+                response += f"\n\n키워드: {keyword}\n"
+                for item in videos[:3]:
+                    video_title = item['snippet']['title']
+                    channel_title = item['snippet']['channelTitle']
+                    video_link = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
+                    response += f"\n제목: {video_title}\n채널: {channel_title}\n링크: {video_link}\n"
+            else:
+                response += f"\n\n키워드 '{keyword}'에 대한 유튜브 동영상을 찾을 수 없습니다."
         
         logging.info(f"Response content: {response}")
         embed = discord.Embed(title="유튜브 검색 결과", description=response, color=0xFF0000)
