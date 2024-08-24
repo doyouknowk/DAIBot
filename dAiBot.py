@@ -147,7 +147,8 @@ async def news_command(interaction: discord.Interaction, 키워드: str):
                 response += f"\n\n키워드: {keyword}\n"
                 for item in news[:3]:
                     title = item['title'].replace("<b>", "").replace("</b>", "")
-                    pubDate = item['pubDate']
+                    pubDate = datetime.datetime.strptime(item['pubDate'], '%a, %d %b %Y %H:%M:%S %z')
+                    pubDate = pubDate.strftime('%Y-%m-%d %H:%M')
                     link = item['link']
                     response += f"\n* 기사: {title}\n* 작성일: {pubDate}\n* 링크: {link}\n"
             else:
