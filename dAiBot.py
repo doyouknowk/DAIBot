@@ -7,10 +7,12 @@ import random
 import datetime
 import myFile
 from discord import app_commands
+from discord.ext import commands
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
 from collections import Counter
 from collections import defaultdict
+from myFile import NAVER_CAFE_LIST
 
 
 # Discord Bot 클라이언트 생성
@@ -126,6 +128,43 @@ async def search_youtube(keyword):
     ).execute()
     
     return search_response.get('items', [])
+
+# NAVER 카페 실시간 인기글 TOP 10 검색 (myFile.py에 정의된 카페 한정)
+async def crawl_naver_cafe_hot_posts(cafe_id: str, clubid: str, count: int = 10) -> list:
+    url = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={clubid}&search.menuid=&search.boardtype=L"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "referer": "https://cafe.naver.com/"
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    iframe = soup.select_one("iframe#cafe_main")
+    if not iframe:
+        return []
+
+    iframe_url = "https://cafe.naver.com" + iframe.get("src")
+    iframe_res = requests.get(iframe_url, headers=headers)
+    iframe_soup = BeautifulSoup(iframe_res.text, "html.parser")
+    rows = iframe_soup.select("div.article-board.m-tcol-c > table > tbody > tr")
+
+    posts = []
+    for row in rows[:count]:
+        try:
+            title_tag = row.select_one("a.article")
+            title = title_tag.text.strip()
+            href = title_tag["href"]
+            author = row.select_one(".p-nick").text.strip()
+            date = row.select("td")[3].text.strip()
+            link = f"https://cafe.naver.com{href}"
+            posts.append({"title": title, "url": link, "author": author, "date": date})
+        except Exception:
+            continue
+
+    return posts
 
 @tree.command(name="뉴스", description="네이버 뉴스를 검색합니다.")
 async def news_command(interaction: discord.Interaction, 키워드: str):
@@ -298,6 +337,23 @@ async def youtube_command(interaction: discord.Interaction, 키워드: str):
         logging.error(f"Error in YouTube command: {e}", exc_info=True)
         await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
 
+# NAVER 카페 실시간 인기글 TOP 10 가져오기
+async def setup_hook(self):
+    for short_name, info in NAVER_CAFE_LIST.items():
+        @self.tree.command(name=f"{short_name}이슈", description=f"{info['description']} 실시간 인기글")
+        async def cafe_issue(interaction: discord.Interaction, _id=info["id"], _clubid=info["clubid"], _desc=info["description"]):
+            await interaction.response.defer()
+            posts = crawl_naver_cafe_hot_posts(_id, _clubid)
+            if not posts:
+                await interaction.followup.send("인기글을 불러오지 못했어요.")
+                return
+
+            result = f"**🔥 {_desc} 인기글 TOP 10**\n\n"
+            for idx, post in enumerate(posts, 1):
+                result += f"{idx}. [{post['title']}]({post['url']}) - {post['author']} | {post['date']}\n"
+            await interaction.followup.send(result)
+
+    await self.tree.sync()
 
 # 로또 당첨번호 / 추천번호 추출 START
 # 동행복권 사이트에서 최근 회차 당첨번호 가져오기
