@@ -115,6 +115,86 @@ async def search_naver_shop(keyword):
     else:
         return None
 
+# 네이버 카페 실시간 인기글 크롤링
+async def crawl_naver_cafe_hot_posts(cafe_alias):
+    if cafe_alias not in myFile.NAVER_CAFE_LIST:
+        return None, f"'{cafe_alias}'은(는) 등록된 카페가 아닙니다."
+    
+    cafe_info = myFile.NAVER_CAFE_LIST[cafe_alias]
+    cafe_id = cafe_info['id']
+    clubid = cafe_info['clubid']
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
+    }
+    
+    # 인기글 페이지 URL
+    hot_url = f"https://cafe.naver.com/{cafe_id}/ArticleList.nhn?search.clubid={clubid}&search.boardtype=L"
+    
+    try:
+        response = requests.get(hot_url, headers=headers)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 인기글 목록 찾기 - iframe 내부에 있을 수 있으므로 다음 URL도 확인
+        hotlist_frame_url = f"https://cafe.naver.com/ArticleListAjax.nhn?search.clubid={clubid}&search.boardtype=L"
+        frame_response = requests.get(hotlist_frame_url, headers=headers)
+        frame_response.raise_for_status()
+        
+        frame_soup = BeautifulSoup(frame_response.text, 'html.parser')
+        
+        # 인기글 목록 추출
+        hot_posts = []
+        article_list = frame_soup.select('tr.article')
+        
+        if not article_list:
+            # 다른 URL 형식 시도
+            main_page_url = f"https://cafe.naver.com/{cafe_id}"
+            main_response = requests.get(main_page_url, headers=headers)
+            main_soup = BeautifulSoup(main_response.text, 'html.parser')
+            
+            # 메인페이지에서 인기글 찾기
+            hotlist_url = f"https://cafe.naver.com/TopArticleList.nhn?clubid={clubid}"
+            hot_response = requests.get(hotlist_url, headers=headers)
+            hot_soup = BeautifulSoup(hot_response.text, 'html.parser')
+            article_list = hot_soup.select('tr.article')
+        
+        count = 0
+        for article in article_list:
+            if count >= myFile.HOT_POSTS_COUNT:  # myFile에 정의된 개수만큼만 가져오기
+                break
+                
+            try:
+                title_elem = article.select_one('a.article')
+                if not title_elem:
+                    continue
+                    
+                title = title_elem.text.strip()
+                article_id = title_elem.get('href').split('articleid=')[1].split('&')[0]
+                link = f"https://cafe.naver.com/{cafe_id}/{article_id}"
+                
+                # 조회수 찾기
+                view_count_elem = article.select_one('td.view-count')
+                view_count = view_count_elem.text.strip() if view_count_elem else "알 수 없음"
+                
+                hot_posts.append({
+                    'title': title,
+                    'link': link,
+                    'view_count': view_count
+                })
+                count += 1
+                
+            except Exception as e:
+                logging.error(f"Error parsing article: {e}")
+                continue
+        
+        return hot_posts, None
+        
+    except Exception as e:
+        logging.error(f"Error crawling cafe hot posts: {e}", exc_info=True)
+        return None, f"카페 인기글 크롤링 중 오류가 발생했습니다: {str(e)}"
+
 # YouTube 검색
 async def search_youtube(keyword):
     # YouTube 검색 실행
@@ -262,6 +342,62 @@ async def shop_command(interaction: discord.Interaction, 키워드: str):
 
     except Exception as e:
         logging.error(f"Error in shop command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+@tree.command(name="인기글", description="네이버 카페의 실시간 인기글을 가져옵니다.")
+async def hot_posts_command(interaction: discord.Interaction, 키워드: str):
+    logging.info(f"Hot posts command received for cafe: {키워드}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # 카페 별칭이 등록되어 있는지 확인
+        if 키워드 not in myFile.NAVER_CAFE_LIST:
+            available_cafes = ", ".join(myFile.NAVER_CAFE_LIST.keys())
+            await interaction.followup.send(f"'{키워드}'은(는) 등록된 카페가 아닙니다. 사용 가능한 카페: {available_cafes}", ephemeral=True)
+            return
+            
+        cafe_info = myFile.NAVER_CAFE_LIST[키워드]
+        cafe_name = cafe_info['description'].split(' (')[0]
+        
+        hot_posts, error = await crawl_naver_cafe_hot_posts(키워드)
+        
+        if error:
+            await interaction.followup.send(f"오류: {error}", ephemeral=True)
+            return
+        
+        if not hot_posts:
+            await interaction.followup.send(f"{cafe_name} 카페에서 인기글을 찾을 수 없습니다.", ephemeral=True)
+            return
+        
+        response = f"{cafe_name} 카페의 실시간 인기글 Top {len(hot_posts)}입니다.\n\n"
+        
+        for i, post in enumerate(hot_posts, 1):
+            response += f"{i}. {post['title']}\n"
+            response += f"   조회수: {post['view_count']}\n"
+            response += f"   링크: {post['link']}\n\n"
+        
+        logging.info(f"Response content length: {len(response)}")
+        
+        # 디스코드 임베드 생성 (길이 제한이 있으므로 필요시 분할)
+        if len(response) > 4000:  # 디스코드 임베드 설명 제한은 4096자
+            chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
+            for i, chunk in enumerate(chunks):
+                embed = discord.Embed(
+                    title=f"{cafe_name} 인기글 Top {myFile.HOT_POSTS_COUNT} ({i+1}/{len(chunks)})",
+                    description=chunk,
+                    color=0x800080
+                )
+                await interaction.followup.send(embed=embed)
+        else:
+            embed = discord.Embed(
+                title=f"{cafe_name} 인기글 Top {len(hot_posts)}",
+                description=response,
+                color=0x800080
+            )
+            await interaction.followup.send(embed=embed)
+    
+    except Exception as e:
+        logging.error(f"Error in hot_posts command: {e}", exc_info=True)
         await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
 
 @tree.command(name="유튜브", description="유튜브를 검색합니다.")
