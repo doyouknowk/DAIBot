@@ -6,6 +6,7 @@ import json
 import random
 import datetime
 import myFile
+import urllib.parse
 from discord import app_commands
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
@@ -172,16 +173,47 @@ async def crawl_naver_cafe_hot_posts(cafe_alias):
                 iframe_src = soup.select_one('#cafe_main')
                 if iframe_src and 'src' in iframe_src.attrs:
                     iframe_url = iframe_src['src']
-                    if not iframe_url.startswith('http'):
-                        iframe_url = f"https://cafe.naver.com{iframe_url}"
+                    
+                    # URL 수정 부분: about:blank URL은 무시
+                    if iframe_url.strip() == "about:blank":
+                        logging.info("Found about:blank URL, skipping iframe approach")
+                    else:
+                        # URL 수정 부분: 올바른 URL 형식으로 수정
+                        if not iframe_url.startswith('http'):
+                            # 슬래시 여부 확인하여 올바른 형식으로 수정
+                            if iframe_url.startswith('/'):
+                                iframe_url = f"https://cafe.naver.com{iframe_url}"
+                            else:
+                                iframe_url = f"https://cafe.naver.com/{iframe_url}"
+                            
+                        logging.info(f"Trying iframe URL: {iframe_url}")
                         
-                    logging.info(f"Trying iframe URL: {iframe_url}")
-                    iframe_response = requests.get(iframe_url, headers=headers)
-                    logging.info(f"iframe URL response status: {iframe_response.status_code}")
+                        # URL 유효성 확인
+                        try:
+                            # URL 파싱 테스트
+                            parsed_url = urllib.parse.urlparse(iframe_url)
+                            if parsed_url.scheme and parsed_url.netloc:
+                                iframe_response = requests.get(iframe_url, headers=headers)
+                                logging.info(f"iframe URL response status: {iframe_response.status_code}")
+                                
+                                iframe_soup = BeautifulSoup(iframe_response.text, 'html.parser')
+                                article_list = iframe_soup.select('.article-board > table > tbody > tr')
+                            else:
+                                logging.warning(f"Invalid iframe URL: {iframe_url}")
+                        except Exception as url_error:
+                            logging.error(f"Error parsing iframe URL: {url_error}")
+                
+                # 모든 방법이 실패한 경우 직접 베스트 게시글 URL 접근
+                if not article_list:
+                    direct_best_url = f"https://cafe.naver.com/{cafe_id}/ArticleList.nhn?search.clubid={clubid}&search.menuid=&search.boardtype=L"
+                    logging.info(f"Trying direct best URL: {direct_best_url}")
                     
-                    iframe_soup = BeautifulSoup(iframe_response.text, 'html.parser')
-                    article_list = iframe_soup.select('.article-board > table > tbody > tr')
+                    response = requests.get(direct_best_url, headers=headers)
+                    logging.info(f"Direct best URL response status: {response.status_code}")
                     
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    article_list = soup.select('.article-board > table > tbody > tr')
+        
         count = 0
         processed_titles = set()  # 중복 제거를 위한 세트
         
@@ -191,7 +223,7 @@ async def crawl_naver_cafe_hot_posts(cafe_alias):
                 
             try:
                 # 모바일 버전의 경우
-                if article.select_one('li.board_box'):
+                if 'board_box' in str(article):
                     title_elem = article.select_one('strong.tit')
                     link_elem = article.select_one('a')
                     view_count_elem = article.select_one('span.num')
