@@ -234,7 +234,7 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
         main_url = f"https://cafe.naver.com/{cafe_info['id']}"
         session.get(main_url, headers=headers)
         
-        # 새로운 인기글 페이지 접근
+        # 인기글 페이지 접근
         popular_url = f"https://cafe.naver.com/f-e/cafes/{numeric_cafe_id}/popular"
         logging.info(f"Accessing popular page: {popular_url}")
         
@@ -244,354 +244,153 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
         if response.status_code != 200:
             return None, f"{cafe_info['description']} 카페 인기글 페이지에 접근할 수 없습니다."
         
+        # 결과 저장
+        hot_posts = []
+        
         # HTML 파싱
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # HTML에서 JavaScript 데이터 추출 시도
-        script_data = None
-        for script in soup.find_all('script'):
-            script_text = script.string
-            if script_text and ('window.__APOLLO_STATE__' in script_text or 'articleList' in script_text):
-                # JavaScript 객체 추출
-                match = re.search(r'window\.__APOLLO_STATE__\s*=\s*({.*?});', script_text, re.DOTALL)
-                if match:
-                    try:
-                        script_data = json.loads(match.group(1))
-                        logging.info("Found article data in Apollo state")
-                        break
-                    except json.JSONDecodeError:
-                        continue
+        # 방법 1: 직접 tr 태그 찾기
+        article_rows = soup.find_all('tr')
         
-        hot_posts = []
+        # 그래도 못 찾았다면 tbody를 찾아 그 안의 tr 태그 찾기
+        if not article_rows or len(article_rows) < 2:  # 헤더 행 제외하고 최소 1개 이상 있어야 함
+            tbody = soup.find('tbody')
+            if tbody:
+                article_rows = tbody.find_all('tr')
         
-        # 1. 스크립트 데이터에서 인기글 추출 시도
-        if script_data:
+        logging.info(f"Found {len(article_rows)} tr elements")
+        
+        # 처리할 개수 결정 (최대 HOT_POSTS_COUNT)
+        max_count = min(len(article_rows), myFile.HOT_POSTS_COUNT)
+        
+        # tr 태그를 통한 게시글 추출
+        for idx, row in enumerate(article_rows):
+            if len(hot_posts) >= myFile.HOT_POSTS_COUNT:
+                break
+                
             try:
-                # Apollo state에서 인기글 데이터 찾기
-                article_keys = [k for k in script_data.keys() if 'Article:' in k]
+                # 1. 제목과 링크 찾기
+                article_link_elem = row.select_one('div.inner_list a.article')
+                if not article_link_elem:
+                    continue
+                    
+                title = article_link_elem.get_text().strip()
+                href = article_link_elem.get('href', '')
                 
-                # 인기글 ID와 제목 매핑
-                article_data = []
-                for key in article_keys:
-                    article = script_data[key]
-                    if 'id' in article and 'title' in article:
-                        article_id = article['id']
-                        title = article['title']
-                        
-                        # 게시일 정보가 있다면 추출
-                        created_at = None
-                        if 'createdAt' in article:
-                            created_at = article['createdAt']
-                        elif 'writtenDate' in article:
-                            created_at = article['writtenDate']
-                        
-                        # 조회수 정보 추출
-                        view_count = "알 수 없음"
-                        if 'viewCount' in article:
-                            view_count = article['viewCount']
-                        
-                        article_data.append({
-                            'id': article_id,
-                            'title': title,
-                            'created_at': created_at,
-                            'view_count': view_count
-                        })
+                # 링크 형식 확인 및 변환
+                if href.startswith('/'):
+                    article_link = f"https://cafe.naver.com{href}"
+                else:
+                    article_link = f"https://cafe.naver.com/{href}"
                 
-                # 최신순으로 정렬
-                if article_data and article_data[0].get('created_at'):
-                    article_data.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+                # 2. 조회수 찾기
+                view_count_elem = row.select_one('td.td_view')
+                view_count = view_count_elem.get_text().strip() if view_count_elem else "알 수 없음"
                 
-                # 결과 구성
-                for article in article_data[:myFile.HOT_POSTS_COUNT]:
+                # 3. 날짜 확인
+                date_elem = row.select_one('td.td_date')
+                date_info = date_elem.get_text().strip() if date_elem else "알 수 없음"
+                
+                # 4. 작성자 정보
+                nickname_elem = row.select_one('span.nickname')
+                nickname = nickname_elem.get_text().strip() if nickname_elem else "알 수 없음"
+                
+                # 5. 댓글 수 (있는 경우)
+                comment_elem = row.select_one('a.cmt em')
+                comment_count = comment_elem.get_text().strip() if comment_elem else "0"
+                
+                # 2005년이 아닌 최신 게시글만 추가
+                if "2005" not in date_info:
                     hot_posts.append({
-                        'title': article['title'],
-                        'link': f"https://cafe.naver.com/{cafe_info['id']}/{article['id']}",
-                        'view_count': article['view_count']
+                        'title': title,
+                        'link': article_link,
+                        'view_count': view_count,
+                        'date': date_info,
+                        'author': nickname,
+                        'comment_count': comment_count
                     })
+                
             except Exception as e:
-                logging.error(f"Error extracting data from script: {e}", exc_info=True)
+                logging.error(f"Error parsing article row {idx}: {e}", exc_info=True)
+                continue
         
-        # 2. HTML 구조에서 인기글 추출 시도 (스크립트 데이터 추출 실패 시)
+        # 방법 2: inner_list 클래스로 직접 찾기 (방법 1이 실패한 경우)
         if not hot_posts:
-            logging.info("Falling back to HTML parsing")
+            inner_lists = soup.select('div.inner_list')
+            logging.info(f"Found {len(inner_lists)} inner_list elements")
             
-            # 인기글 목록 컨테이너
-            article_containers = [
-                'div.ArticleList_article_list__3L9z4',  # 새 UI
-                'div.article_list_area',                # 구 UI
-                'div.article-board',                    # 다른 형태
-                'table.article-board',                  # 테이블 형식
-            ]
-            
-            article_items = []
-            for container_selector in article_containers:
-                container = soup.select_one(container_selector)
-                if container:
-                    # 인기글 항목 선택자
-                    for item_selector in ['li', 'tr:not(:first-child)', 'div.article-board-item']:
-                        items = container.select(item_selector)
-                        if items:
-                            article_items = items
-                            logging.info(f"Found {len(items)} items with selector: {container_selector} > {item_selector}")
-                            break
-                    if article_items:
-                        break
-            
-            # 더 직접적인 선택자 시도
-            if not article_items:
-                direct_selectors = [
-                    'li.ArticleItem_item__2rcYf',
-                    'li.article_item',
-                    'div.article_item',
-                    'tr.article_item',
-                    '.article-item',
-                ]
-                
-                for selector in direct_selectors:
-                    items = soup.select(selector)
-                    if items:
-                        article_items = items
-                        logging.info(f"Found {len(items)} items with direct selector: {selector}")
-                        break
-            
-            # 가장 일반적인 선택자로 마지막 시도
-            if not article_items:
-                all_links = soup.select('a')
-                article_pattern = re.compile(r'/articles/\d+$|/\d+$')
-                article_links = [link for link in all_links if link.get('href') and article_pattern.search(link.get('href'))]
-                
-                if article_links:
-                    article_items = article_links
-                    logging.info(f"Found {len(article_links)} article links with pattern matching")
-            
-            # 페이지 구조 로깅
-            if not article_items:
-                logging.debug("HTML structure debug:")
-                for div in soup.find_all('div', class_=True)[:10]:  # 처음 10개만 로깅
-                    logging.debug(f"Div with class: {div.get('class')}")
-            
-            # 제한된 개수의 게시글만 파싱
-            max_posts = min(len(article_items), myFile.HOT_POSTS_COUNT)
-            parsed_count = 0
-            
-            for item in article_items:
-                if parsed_count >= myFile.HOT_POSTS_COUNT:
+            for idx, inner_list in enumerate(inner_lists):
+                if len(hot_posts) >= myFile.HOT_POSTS_COUNT:
                     break
-                
+                    
                 try:
-                    # 1. 제목과 링크 찾기
-                    title_elem = None
-                    
-                    # 인기글 항목이 링크 자체인 경우
-                    if item.name == 'a':
-                        title_elem = item
-                    else:
-                        # 제목 요소 찾기 (여러 가능한 선택자 시도)
-                        title_selectors = [
-                            'a.ArticleItem_link__1dDEW',
-                            'a.article_title',
-                            'a.article_link',
-                            'a[href*="/articles/"]',
-                            'a[href*="/"]',
-                            'td.board-list-title a',
-                            'div.inner_list > a',
-                            'h4 > a',
-                            'a'
-                        ]
-                        
-                        for selector in title_selectors:
-                            found_elems = item.select(selector)
-                            # 여러 링크 중 가장 긴 텍스트를 가진 것이 제목일 가능성이 높음
-                            if found_elems:
-                                found_elems.sort(key=lambda x: len(x.get_text().strip()), reverse=True)
-                                title_elem = found_elems[0]
-                                break
-                    
-                    if not title_elem or not title_elem.get_text().strip():
+                    # 게시글 링크와 제목
+                    article_link_elem = inner_list.select_one('a.article')
+                    if not article_link_elem:
                         continue
+                        
+                    title = article_link_elem.get_text().strip()
+                    href = article_link_elem.get('href', '')
                     
-                    title = title_elem.get_text().strip()
-                    
-                    # 링크 추출
-                    href = title_elem.get('href', '')
-                    
-                    # 게시글 ID 추출
-                    article_id = None
-                    
-                    # 다양한 URL 패턴 처리
-                    if '/articles/' in href:
-                        article_id = re.search(r'/articles/(\d+)', href).group(1)
-                    elif 'articleid=' in href:
-                        article_id = re.search(r'articleid=(\d+)', href).group(1)
-                    elif href.startswith('/'):
-                        # /숫자 형태의 경로
-                        match = re.search(r'/(\d+)$', href)
-                        if match:
-                            article_id = match.group(1)
-                    elif re.search(r'/\d+$', href):
-                        # 끝에 숫자가 있는 경로
-                        article_id = re.search(r'/(\d+)$', href).group(1)
-                    
-                    # 게시글 링크 구성
-                    if article_id:
-                        article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
+                    # 링크 형식 확인 및 변환
+                    if href.startswith('/'):
+                        article_link = f"https://cafe.naver.com{href}"
                     else:
-                        # 직접 URL 구성
-                        if href.startswith('http'):
-                            article_link = href
-                        elif href.startswith('/'):
-                            article_link = f"https://cafe.naver.com{href}"
-                        else:
-                            article_link = f"https://cafe.naver.com/{cafe_info['id']}/{href}"
+                        article_link = f"https://cafe.naver.com/{href}"
                     
-                    # 2. 조회수 찾기
+                    # 상위 tr 요소 찾기
+                    tr_elem = inner_list.find_parent('tr')
+                    
+                    # 조회수, 날짜, 작성자 정보
                     view_count = "알 수 없음"
-                    view_selectors = [
-                        '.ArticleItem_info_view_count__tOrpY', 
-                        '.ArticleItem_view_count__2_vUv',
-                        '.view_count',
-                        '.count',
-                        'td.view-count',
-                        '.board-list-count',
-                        '.article-views',
-                        'span:contains("조회")'
-                    ]
-                    
-                    for selector in view_selectors:
-                        view_elem = None
-                        try:
-                            if ':contains' in selector:
-                                # BeautifulSoup은 :contains를 지원하지 않으므로 수동 검색
-                                for span in item.find_all('span'):
-                                    if '조회' in span.get_text():
-                                        view_elem = span
-                                        break
-                            else:
-                                view_elem = item.select_one(selector)
-                        except Exception:
-                            continue
-                            
-                        if view_elem:
-                            view_text = view_elem.get_text().strip()
-                            # 조회 또는 숫자만 추출
-                            view_match = re.search(r'조회\s*(\d+)', view_text) or re.search(r'(\d+)', view_text)
-                            if view_match:
-                                view_count = view_match.group(1)
-                                break
-                    
-                    # 3. 날짜 정보 (가능한 경우)
                     date_info = "알 수 없음"
-                    date_selectors = [
-                        '.ArticleItem_info_date__gHCqs',
-                        '.date',
-                        '.board-list-date',
-                        'td.date',
-                        'span.date',
-                        'span:contains("시간")',
-                        'span:contains("분")',
-                        'span:contains("일")'
-                    ]
+                    nickname = "알 수 없음"
                     
-                    for selector in date_selectors:
-                        date_elem = None
-                        try:
-                            if ':contains' in selector:
-                                # 수동 검색
-                                for span in item.find_all('span'):
-                                    text = span.get_text()
-                                    if '시간' in text or '분' in text or '일' in text:
-                                        date_elem = span
-                                        break
-                            else:
-                                date_elem = item.select_one(selector)
-                        except Exception:
-                            continue
+                    if tr_elem:
+                        view_count_elem = tr_elem.select_one('td.td_view')
+                        if view_count_elem:
+                            view_count = view_count_elem.get_text().strip()
                             
+                        date_elem = tr_elem.select_one('td.td_date')
                         if date_elem:
                             date_info = date_elem.get_text().strip()
-                            break
+                            
+                        nickname_elem = tr_elem.select_one('span.nickname')
+                        if nickname_elem:
+                            nickname = nickname_elem.get_text().strip()
                     
-                    # 최근 게시글만 추가 (날짜 정보에 "년" 또는 "월" 있는 경우 2023년처럼 오래된 글 제외)
-                    # "일", "시간", "분" 전이나 오늘 날짜인 경우만 포함
-                    if "년" not in date_info and "20" not in date_info:
+                    # 댓글 수
+                    comment_elem = inner_list.select_one('a.cmt em')
+                    comment_count = comment_elem.get_text().strip() if comment_elem else "0"
+                    
+                    # 최신 게시글만 추가
+                    if "2005" not in date_info and date_info != "알 수 없음":
                         hot_posts.append({
                             'title': title,
                             'link': article_link,
                             'view_count': view_count,
-                            'date': date_info
+                            'date': date_info,
+                            'author': nickname,
+                            'comment_count': comment_count
                         })
-                        parsed_count += 1
-                
+                    
                 except Exception as e:
-                    logging.error(f"Error parsing article item: {e}", exc_info=True)
+                    logging.error(f"Error parsing inner_list {idx}: {e}", exc_info=True)
                     continue
-        
-        # 3. 마지막 시도: iframe 내 컨텐츠 분석
-        if not hot_posts:
-            iframes = soup.find_all('iframe')
-            if iframes:
-                logging.info(f"Found {len(iframes)} iframes, attempting to analyze")
-                
-                for iframe in iframes:
-                    iframe_src = iframe.get('src', '')
-                    if iframe_src and ('menu=' in iframe_src or 'menuid=' in iframe_src or 'popular' in iframe_src.lower()):
-                        try:
-                            iframe_response = session.get(iframe_src, headers=headers)
-                            if iframe_response.status_code == 200:
-                                iframe_soup = BeautifulSoup(iframe_response.text, 'html.parser')
-                                
-                                # iframe 내에서 게시글 목록 찾기
-                                for selector in ['table.board-box', 'table.board-list', 'ul.article-list', 'div.article-list']:
-                                    list_elem = iframe_soup.select_one(selector)
-                                    if list_elem:
-                                        items = list_elem.select('tr:not(:first-child)') if 'table' in selector else list_elem.select('li')
-                                        
-                                        for item in items[:myFile.HOT_POSTS_COUNT]:
-                                            try:
-                                                title_elem = item.select_one('a')
-                                                if title_elem and title_elem.get_text().strip():
-                                                    title = title_elem.get_text().strip()
-                                                    href = title_elem.get('href', '')
-                                                    
-                                                    # 상대 경로를 절대 경로로 변환
-                                                    if href.startswith('/'):
-                                                        href = f"https://cafe.naver.com{href}"
-                                                    elif not href.startswith('http'):
-                                                        href = f"https://cafe.naver.com/{cafe_info['id']}/{href}"
-                                                    
-                                                    hot_posts.append({
-                                                        'title': title,
-                                                        'link': href,
-                                                        'view_count': "알 수 없음"
-                                                    })
-                                            except Exception:
-                                                continue
-                                        
-                                        if hot_posts:
-                                            break
-                        except Exception as e:
-                            logging.error(f"Error analyzing iframe: {e}")
-                            continue
-                
-                # iframe 분석 결과가 있으면 종료
-                if hot_posts:
-                    hot_posts = hot_posts[:myFile.HOT_POSTS_COUNT]
         
         # 결과 확인 및 반환
         if hot_posts:
-            # 결과가 지정된 개수보다 적은 경우 로그
-            if len(hot_posts) < myFile.HOT_POSTS_COUNT:
-                logging.warning(f"Only found {len(hot_posts)} articles, less than requested {myFile.HOT_POSTS_COUNT}")
-            
-            # 최대 지정된 개수만큼만 반환
+            # HOT_POSTS_COUNT만큼 반환
             return hot_posts[:myFile.HOT_POSTS_COUNT], None
         else:
-            # 데이터를 찾지 못한 경우 HTML 구조 디버깅
-            logging.debug("Failed to find any articles. HTML structure:")
-            for tag in soup.find_all(['div', 'table', 'ul'], class_=True)[:15]:
-                logging.debug(f"{tag.name} with class: {tag.get('class')}")
+            # 디버깅을 위해 HTML 구조 정보 저장
+            logging.debug("HTML structure debug - first 10 tr elements:")
+            for i, tr in enumerate(article_rows[:10]):
+                logging.debug(f"TR {i} classes: {tr.get('class', 'No class')}")
+                logging.debug(f"TR {i} first level children: {[c.name for c in tr.children if c.name]}")
             
-            return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다. 로그인이 필요할 수 있습니다."
+            return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다."
         
     except Exception as e:
         logging.error(f"Error crawling cafe hot posts: {e}", exc_info=True)
