@@ -171,149 +171,101 @@ async def search_naver_shop(keyword):
         return None
 
 # NAVER 인기글 크롤링
-async def crawl_naver_cafe_hot_posts(cafe_alias, NAVER_ID=None, NAVER_PW=None):
+async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
     if cafe_alias not in myFile.NAVER_CAFE_LIST:
         return None, f"'{cafe_alias}'은(는) 등록된 카페가 아닙니다."
     
     cafe_info = myFile.NAVER_CAFE_LIST[cafe_alias]
-    cafe_id = cafe_info['id']  # 문자열 ID (예: 'dieselmania')
+    numeric_cafe_id = cafe_info['numeric_id']  # 새로운 URL에 필요한 숫자 ID
     
-    # 로그인 (ID와 PW가 제공된 경우)
-    session = None
-    if NAVER_ID and NAVER_PW:
-        session = naver_login(NAVER_ID, NAVER_PW)
-        
-    # 로그인 실패 또는 로그인 정보가 없는 경우 일반 세션 사용
-    if not session:
-        session = requests.Session()
-        
+    # 세션 생성 (로그인 기능 유지)
+    session = requests.Session()
+    
+    # 로그인 처리 (필요할 경우)
+    if naver_id and naver_pw:
+        login_session = naver_login(naver_id, naver_pw)
+        if login_session:
+            session = login_session
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://cafe.naver.com/'
+        'Referer': 'https://cafe.naver.com/',
+        'sec-ch-ua': '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
     }
     
     try:
-        # 1. 카페 메인 페이지 접속
-        pc_main_url = f"https://cafe.naver.com/{cafe_id}"
-        main_response = session.get(pc_main_url, headers=headers)
-        logging.info(f"PC main URL response status: {main_response.status_code}")
+        # 1. 새로운 인기글 페이지 접근 - HTML 페이지
+        popular_url = f"https://cafe.naver.com/f-e/cafes/{numeric_cafe_id}/popular"
+        logging.info(f"Accessing popular page: {popular_url}")
         
-        if main_response.status_code != 200:
-            return None, f"{cafe_info['description']} 카페 접속 중 오류가 발생했습니다."
+        response = session.get(popular_url, headers=headers)
+        logging.info(f"Popular page response status: {response.status_code}")
         
-        # 숫자형 clubid 추출 (API 호출용)
-        club_id_match = re.search(r'"cafeId"\s*:\s*"?(\d+)"?|"clubid"\s*:\s*"?(\d+)"?', main_response.text)
+        if response.status_code != 200:
+            # API 접근 방식으로 전환
+            return await fetch_popular_posts_api(cafe_alias, session, headers)
         
-        if not club_id_match:
-            return None, f"{cafe_info['description']} 카페 ID를 찾을 수 없습니다."
-            
-        numeric_cafe_id = club_id_match.group(1) if club_id_match.group(1) else club_id_match.group(2)
+        # HTML 파싱
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 2. 인기글 목록 접근
-        iframe_url = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={numeric_cafe_id}&search.boardtype=L"
+        # 인기글 목록 찾기
+        article_items = soup.select('div.ArticleList_article_list__3L9z4 li')
         
-        iframe_response = session.get(iframe_url, headers=headers)
-        logging.info(f"iframe URL response status: {iframe_response.status_code}")
+        if not article_items:
+            article_items = soup.select('div.ArticleList li')
         
-        if iframe_response.status_code != 200:
-            return None, f"{cafe_info['description']} 카페 인기글 접근 중 오류가 발생했습니다."
-            
-        # 3. 인기글 파싱
-        soup = BeautifulSoup(iframe_response.text, 'html.parser')
+        if not article_items:
+            article_items = soup.select('.article_list_item')
         
-        # 게시글 요소 찾기 (여러 선택자 시도)
-        article_elements = (
-            soup.select('.article-board tbody tr:not(.notice)') or
-            soup.select('.board-box tbody tr') or
-            soup.select('#main-area table tbody tr:not(.notice)') or
-            soup.select('.board-list tr:not(.notice)')
-        )
-        
-        if not article_elements:
-            # 최신 버전의 API 시도
-            api_url = f"https://apis.naver.com/cafe-web/cafe-articleapi/cafes/{numeric_cafe_id}/articles/list?useCafeId=true&search.boardtype=L&search.searchPeriod=ALL&orderBy=asc&search.media=0&search.queryType=title&search.menuid=&search.searchBy=&artclSize=15&search.exceptNotice=true"
-            
-            api_headers = headers.copy()
-            api_headers['Referer'] = pc_main_url
-            api_headers['X-Cafe-Product'] = 'pc'
-            
-            api_response = session.get(api_url, headers=api_headers)
-            
-            if api_response.status_code == 200:
-                try:
-                    data = api_response.json()
-                    articles = data.get('message', {}).get('result', {}).get('articleList', [])
-                    
-                    hot_posts = []
-                    
-                    for article in articles[:myFile.HOT_POSTS_COUNT]:
-                        article_id = article.get('articleId')
-                        title = article.get('subject', '').strip()
-                        view_count = str(article.get('readCount', '알 수 없음'))
-                        
-                        if title and article_id:
-                            article_link = f"https://cafe.naver.com/{cafe_id}/{article_id}"
-                            
-                            hot_posts.append({
-                                'title': title,
-                                'link': article_link,
-                                'view_count': view_count
-                            })
-                    
-                    if hot_posts:
-                        return hot_posts, None
-                except Exception as e:
-                    logging.error(f"Error parsing API data: {e}", exc_info=True)
-            
-            return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다."
+        if not article_items:
+            # 항목을 찾지 못한 경우 API 접근 방식으로 전환
+            return await fetch_popular_posts_api(cafe_alias, session, headers)
         
         hot_posts = []
         
-        for article in article_elements[:myFile.HOT_POSTS_COUNT]:
+        for item in article_items[:myFile.HOT_POSTS_COUNT]:
             try:
-                # 제목 찾기
-                title_elem = (
-                    article.select_one('a.article') or
-                    article.select_one('.article') or
-                    article.select_one('.subject a') or
-                    article.select_one('td.td_article a')
-                )
+                # 제목 요소 찾기
+                title_elem = item.select_one('a.ArticleItem_link__1dDEW') or item.select_one('.article_title') or item.select_one('a')
                 
                 if not title_elem:
                     continue
-                    
-                title = title_elem.get_text().strip()
                 
+                title = title_elem.get_text().strip()
                 if not title:
                     continue
-                    
-                href = title_elem.get('href')
                 
+                # 링크 가져오기
+                href = title_elem.get('href')
                 if not href:
                     continue
-                    
-                # 조회수 찾기
-                view_count_elem = (
-                    article.select_one('.td_view') or
-                    article.select_one('.view-count') or
-                    article.select_one('.read-count') or
-                    article.select_one('.num')
-                )
                 
-                view_count = view_count_elem.get_text().strip() if view_count_elem else "알 수 없음"
-                
-                # 게시글 ID 추출 및 URL 생성
+                # 게시글 ID 추출
                 article_id = None
+                if '/articles/' in href:
+                    article_id = re.search(r'/articles/(\d+)', href).group(1)
                 
-                if 'articleid=' in href:
-                    article_id = re.search(r'articleid=(\d+)', href).group(1)
-                
+                # 링크 구성
                 if article_id:
-                    article_link = f"https://cafe.naver.com/{cafe_id}/{article_id}"
+                    article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
                 else:
                     article_link = f"https://cafe.naver.com{href}" if href.startswith('/') else href
+                
+                # 조회수 찾기
+                view_count_elem = item.select_one('.ArticleItem_view_count__2_vUv') or item.select_one('.view_count') or item.select_one('.count')
+                view_count = "알 수 없음"
+                
+                if view_count_elem:
+                    view_text = view_count_elem.get_text().strip()
+                    view_match = re.search(r'조회\s*(\d+)', view_text)
+                    if view_match:
+                        view_count = view_match.group(1)
+                    else:
+                        view_count = view_text
                 
                 hot_posts.append({
                     'title': title,
@@ -327,14 +279,84 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, NAVER_ID=None, NAVER_PW=None):
         
         # 결과 처리
         if not hot_posts:
-            logging.warning(f"No posts found for cafe {cafe_alias}")
-            return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다."
+            # HTML 파싱 실패 시 API 접근 방식으로 전환
+            return await fetch_popular_posts_api(cafe_alias, session, headers)
         
         return hot_posts, None
         
     except Exception as e:
         logging.error(f"Error crawling cafe hot posts: {e}", exc_info=True)
-        return None, f"카페 인기글 크롤링 중 오류가 발생했습니다: {str(e)}"
+        
+        # 오류 발생 시 API 접근 시도
+        try:
+            return await fetch_popular_posts_api(cafe_alias, session, headers)
+        except Exception as api_err:
+            return None, f"카페 인기글 크롤링 중 오류가 발생했습니다: {str(e)}"
+
+# API를 통한 인기글 가져오기
+async def fetch_popular_posts_api(cafe_alias, session, headers):
+    cafe_info = myFile.NAVER_CAFE_LIST[cafe_alias]
+    numeric_cafe_id = cafe_info['numeric_id']
+    
+    try:
+        # 1. API 접근 (새로운 인기글 API - GraphQL)
+        api_url = f"https://apis.naver.com/cafe-web/cafe-articleapi/cafes/{numeric_cafe_id}/articles/popular"
+        api_headers = headers.copy()
+        api_headers['Content-Type'] = 'application/json'
+        api_headers['X-Cafe-Product'] = 'pc'
+        
+        api_response = session.get(api_url, headers=api_headers)
+        logging.info(f"Popular API response status: {api_response.status_code}")
+        
+        if api_response.status_code != 200:
+            # 두 번째 API 형식 시도
+            api_url_alt = f"https://apis.naver.com/cafe-web/cafe-articleapi/cafes/{numeric_cafe_id}/articles/list?menuId=popular&includeTotalCount=true&page=1&perPage=50"
+            
+            api_response = session.get(api_url_alt, headers=api_headers)
+            logging.info(f"Alternative API response status: {api_response.status_code}")
+            
+            if api_response.status_code != 200:
+                return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다."
+        
+        # API 응답 파싱
+        data = api_response.json()
+        
+        article_list = None
+        
+        # 응답 구조에 따라 데이터 추출 경로 결정
+        if 'message' in data and 'result' in data['message']:
+            if 'popularArticleList' in data['message']['result']:
+                article_list = data['message']['result']['popularArticleList']
+            elif 'articleList' in data['message']['result']:
+                article_list = data['message']['result']['articleList']
+        
+        if not article_list:
+            return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다."
+        
+        hot_posts = []
+        
+        for article in article_list[:myFile.HOT_POSTS_COUNT]:
+            article_id = article.get('articleId')
+            title = article.get('subject', '').strip()
+            view_count = str(article.get('readCount', '알 수 없음'))
+            
+            if title and article_id:
+                article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
+                
+                hot_posts.append({
+                    'title': title,
+                    'link': article_link,
+                    'view_count': view_count
+                })
+        
+        if not hot_posts:
+            return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다."
+        
+        return hot_posts, None
+        
+    except Exception as e:
+        logging.error(f"Error fetching popular posts via API: {e}", exc_info=True)
+        return None, f"API를 통한 인기글 크롤링 중 오류가 발생했습니다: {str(e)}"
 
 # YouTube 검색
 async def search_youtube(keyword):
@@ -478,7 +500,7 @@ async def shop_command(interaction: discord.Interaction, 키워드: str):
                 response += f"\n\n키워드 '{keyword}'에 대한 상품을 찾을 수 없습니다."
         
         logging.info(f"Response content: {response}")
-        embed = discord.Embed(title="쇼핑 검색 결과", description=response, color=0xFF00FF)
+        embed = discord.Embed(title="쇼핑 검색 결과", description=response, color=0x800080)
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
@@ -527,14 +549,14 @@ async def hot_posts_command(interaction: discord.Interaction, 키워드: str):
                 embed = discord.Embed(
                     title=f"{cafe_name} 인기글 Top {myFile.HOT_POSTS_COUNT} ({i+1}/{len(chunks)})",
                     description=chunk,
-                    color=0x800080
+                    color=0xFF00FF
                 )
                 await interaction.followup.send(embed=embed)
         else:
             embed = discord.Embed(
                 title=f"{cafe_name} 인기글 Top {len(hot_posts)}",
                 description=response,
-                color=0x800080
+                color=0xFF00FF
             )
             await interaction.followup.send(embed=embed)
     

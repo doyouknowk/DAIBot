@@ -9,26 +9,31 @@ NAVER_CAFE_LIST = {
     "디매": {
         "id": "dieselmania",
         "clubid": "10050100",
+        "numeric_id": "11262350",
         "description": "디젤매니아"
     },
     "아사모": {
         "id": "appleiphone",
         "clubid": "11043182",
+        "numeric_id": "12789486",
         "description": "아사모"
     },
     "비매": {
         "id": "true8",
         "clubid": "10371124",
+        "numeric_id": "18736796",
         "description": "BMW 매니아"
     },
     "나매": {
         "id": "sssw",
         "clubid": "10094449",
+        "numeric_id": "10625158",
         "description": "나이키 매니아"
     },
     "레드펄스": {
         "id": "ksm60111",
         "clubid": "29763958",
+        "numeric_id": "13284544",
         "description": "레드펄스"
     }
 }
