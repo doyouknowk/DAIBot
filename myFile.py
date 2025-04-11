@@ -9,27 +9,27 @@ NAVER_CAFE_LIST = {
     "디매": {
         "id": "dieselmania",
         "clubid": "10050100",
-        "description": "디젤매니아 (패션 및 사회 전반적인 이슈, 일상 공유)"
+        "description": "디젤매니아"
     },
     "아사모": {
         "id": "appleiphone",
         "clubid": "11043182",
-        "description": "아사모 (애플 제품 관련 정보 공유)"
+        "description": "아사모"
     },
     "비매": {
         "id": "true8",
         "clubid": "10371124",
-        "description": "비매 (비공식 매니아 커뮤니티)"
+        "description": "BMW 매니아"
     },
     "나매": {
         "id": "sssw",
         "clubid": "10094449",
-        "description": "나매 (나의 매니아 커뮤니티)"
+        "description": "나이키 매니아"
     },
-    "레펄": {
+    "레드펄스": {
         "id": "ksm60111",
         "clubid": "29763958",
-        "description": "레펄 (레트로 퍼즐 카페)"
+        "description": "레드펄스"
     }
 }
 HOT_POSTS_COUNT = 10    # 가져올 실시간 인기글 개수
