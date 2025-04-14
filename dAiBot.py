@@ -6,6 +6,8 @@ import json
 import random
 import datetime
 import myFile
+import matplotlib.pyplot as plt
+import io
 from discord import app_commands
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
@@ -73,7 +75,7 @@ async def search_naver_blog(keyword):
     else:
         return None
 
-# NAVER 카페 검색       
+# NAVER 카페 검색
 async def search_naver_cafe(keyword):
     url = "https://openapi.naver.com/v1/search/cafearticle.json"
     headers = {
@@ -94,7 +96,7 @@ async def search_naver_cafe(keyword):
     else:
         return None
 
-# NAVER 쇼핑 검색       
+# NAVER 쇼핑 검색
 async def search_naver_shop(keyword):
     url = "https://openapi.naver.com/v1/search/shop.json"
     headers = {
@@ -115,6 +117,73 @@ async def search_naver_shop(keyword):
     else:
         return None
 
+# NAVER 데이터랩 검색 (트렌드)
+async def get_search_trend(keywords, start_date, end_date):
+    url = "https://openapi.naver.com/v1/datalab/search"
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        "Content-Type": "application/json"
+    }
+    
+    # 키워드 목록 생성
+    keyword_groups = []
+    for keyword in keywords:
+        keyword_groups.append({
+            "groupName": keyword,
+            "keywords": [keyword]
+        })
+    
+    # 요청 데이터 구성    
+    body = {
+        "startDate": start_date,
+        "endDate": end_date,
+        "timeUnit": "week",  # 주간 데이터, 'date', 'week', 'month' 중 선택
+        "keywordGroups": keyword_groups
+    }
+    
+    response = requests.post(url, headers=headers, data=json.dumps(body))
+    
+    if response.status_code == 200:
+        return json.loads(response.text)
+    else:
+        return None
+
+# 검색어 트렌드 그래프 생성
+async def create_trend_graph(data, keywords):
+    results = data["results"]
+    
+    # 날짜와 각 키워드별 검색량 데이터 추출
+    dates = []
+    values_by_keyword = {keyword: [] for keyword in keywords}
+    
+    for result in results:
+        keyword = result["title"]
+        for item in result["data"]:
+            if keyword == keywords[0]:  # 첫 번째 키워드에서만 날짜 추출
+                dates.append(item["period"])
+            values_by_keyword[keyword].append(item["ratio"])
+    
+    # 그래프 생성
+    plt.figure(figsize=(12, 6))
+    for keyword in keywords:
+        plt.plot(dates, values_by_keyword[keyword], marker='o', label=keyword)
+    
+    plt.title('검색어 트렌드 비교')
+    plt.xlabel('기간')
+    plt.ylabel('검색량 (상대적 비율)')
+    plt.grid(True)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
+    # 그래프를 이미지로 저장
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    
+    return buf
+
 # YouTube 검색
 async def search_youtube(keyword):
     # YouTube 검색 실행
@@ -126,178 +195,6 @@ async def search_youtube(keyword):
     ).execute()
     
     return search_response.get('items', [])
-
-@tree.command(name="뉴스", description="네이버 뉴스를 검색합니다.")
-async def news_command(interaction: discord.Interaction, 키워드: str):
-    logging.info(f"News command received with keyword: {키워드}")
-    await interaction.response.defer(thinking=True)
-    
-    try:
-        keywords = 키워드.split(',')
-        response = f"{', '.join(keywords)} 관련 최신 뉴스입니다.\n"
-    
-        for keyword in keywords:
-            keyword = keyword.strip()
-
-            logging.info(f"Searching for keyword: {keyword}")
-
-            news = await search_naver_news(keyword)
-
-            if news:
-                response += f"\n\n키워드: {keyword}\n"
-                for item in news[:myFile.RESULT_ITEM]:
-                    title = item['title'].replace("<b>", "").replace("</b>", "")
-                    pubDate = datetime.datetime.strptime(item['pubDate'], '%a, %d %b %Y %H:%M:%S %z')
-                    pubDate = pubDate.strftime('%Y-%m-%d %H:%M')
-                    link = item['link']
-                    response += f"\n* 기사: {title}\n* 작성일: {pubDate}\n* 링크: {link}\n"
-            else:
-                response += f"\n\n키워드 '{keyword}'에 대한 뉴스를 찾을 수 없습니다."
-
-        logging.info(f"Response content: {response}")
-        embed = discord.Embed(title="뉴스 검색 결과", description=response, color=0xFFFF00)
-        await interaction.followup.send(embed=embed)
-    
-    except Exception as e:
-        logging.error(f"Error in news command: {e}", exc_info=True)
-        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
-
-@tree.command(name="블로그", description="네이버 블로그를 검색합니다.")
-async def blog_command(interaction: discord.Interaction, 키워드: str):
-    logging.info(f"Blog command received with keyword: {키워드}")
-    await interaction.response.defer(thinking=True)
-    
-    try:
-        keywords = 키워드.split(',')
-        response = f"{', '.join(keywords)} 관련 블로그 포스트입니다.\n"
-        
-        for keyword in keywords:
-            keyword = keyword.strip()
-
-            logging.info(f"Searching for keyword: {keyword}")
-
-            blogs = await search_naver_blog(keyword)
-
-            if blogs:
-                response += f"\n\n키워드: {keyword}\n"
-                for item in blogs[:myFile.RESULT_ITEM]:
-                    bloggername = item['bloggername']
-                    title = item['title'].replace("<b>", "").replace("</b>", "")
-                    link = item['link']
-                    response += f"\n* 블로거: {bloggername}\n* 포스트: {title}\n* 링크: {link}\n"
-            else:
-                response += f"\n\n키워드 '{keyword}'에 대한 블로그 포스트를 찾을 수 없습니다."
-        
-        logging.info(f"Response content: {response}")
-        embed = discord.Embed(title="블로그 검색 결과", description=response, color=0x00FF00)
-        await interaction.followup.send(embed=embed)
-
-    except Exception as e:
-        logging.error(f"Error in blog command: {e}", exc_info=True)
-        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
-
-@tree.command(name="카페", description="네이버 카페를 검색합니다.")
-async def cafe_command(interaction: discord.Interaction, 키워드: str):
-    logging.info(f"Cafe command received with keyword: {키워드}")
-    await interaction.response.defer(thinking=True)
-    
-    try:
-        keywords = 키워드.split(',')
-        response = f"{', '.join(keywords)} 관련 카페 게시글입니다.\n"
-        
-        for keyword in keywords:
-            keyword = keyword.strip()
-
-            logging.info(f"Searching for keyword: {keyword}")
-
-            cafes = await search_naver_cafe(keyword)
-
-            if cafes:
-                response += f"\n\n키워드: {keyword}\n"
-                for item in cafes[:myFile.RESULT_ITEM]:
-                    cafename = item['cafename']
-                    title = item['title'].replace("<b>", "").replace("</b>", "")
-                    link = item['link']
-                    response += f"\n* 카페명: {cafename}\n* 게시글: {title}\n* 링크: {link}\n"
-            else:
-                response += f"\n\n키워드 '{keyword}'에 대한 카페 게시글을 찾을 수 없습니다."
-        
-        logging.info(f"Response content: {response}")
-        embed = discord.Embed(title="카페 검색 결과", description=response, color=0x0000FF)
-        await interaction.followup.send(embed=embed)
-
-    except Exception as e:
-        logging.error(f"Error in cafe command: {e}", exc_info=True)
-        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
-
-@tree.command(name="쇼핑", description="네이버 쇼핑을 검색합니다.")
-async def shop_command(interaction: discord.Interaction, 키워드: str):
-    logging.info(f"Shop command received with keyword: {키워드}")
-    await interaction.response.defer(thinking=True)
-    
-    try:
-        keywords = 키워드.split(',')
-        response = f"{', '.join(keywords)} 관련 상품입니다.\n"
-        
-        for keyword in keywords:
-            keyword = keyword.strip()
-
-            logging.info(f"Searching for keyword: {keyword}")
-
-            products = await search_naver_shop(keyword)
-
-            if products:
-                response += f"\n\n키워드: {keyword}\n"
-                for item in products[:myFile.RESULT_ITEM]:
-                    title = item['title'].replace("<b>", "").replace("</b>", "")
-                    mallName = item['mallName']
-                    link = item['link']
-                    response += f"\n* 상품명: {title}\n* 스토어: {mallName}\n* 링크: {link}\n"
-            else:
-                response += f"\n\n키워드 '{keyword}'에 대한 상품을 찾을 수 없습니다."
-        
-        logging.info(f"Response content: {response}")
-        embed = discord.Embed(title="쇼핑 검색 결과", description=response, color=0x800080)
-        await interaction.followup.send(embed=embed)
-
-    except Exception as e:
-        logging.error(f"Error in shop command: {e}", exc_info=True)
-        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
-
-@tree.command(name="유튜브", description="유튜브를 검색합니다.")
-async def youtube_command(interaction: discord.Interaction, 키워드: str):
-    logging.info(f"YouTube command received with keyword: {키워드}")
-    await interaction.response.defer(thinking=True)
-    
-    try:
-        keywords = 키워드.split(',')
-        response = f"{', '.join(keywords)} 관련 유튜브 동영상입니다.\n"
-        
-        for keyword in keywords:
-            keyword = keyword.strip()
-            
-            logging.info(f"Searching for keyword: {keyword}")
-            
-            videos = await search_youtube(keyword)
-            
-            if videos:
-                response += f"\n\n키워드: {keyword}\n"
-                for item in videos[:myFile.RESULT_ITEM]:
-                    video_title = item['snippet']['title']
-                    channel_title = item['snippet']['channelTitle']
-                    video_link = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
-                    response += f"\n* 제목: {video_title}\n* 채널명: {channel_title}\n* 링크: {video_link}\n"
-            else:
-                response += f"\n\n키워드 '{keyword}'에 대한 유튜브 동영상을 찾을 수 없습니다."
-        
-        logging.info(f"Response content: {response}")
-        embed = discord.Embed(title="유튜브 검색 결과", description=response, color=0xFF0000)
-        await interaction.followup.send(embed=embed)
-    
-    except Exception as e:
-        logging.error(f"Error in YouTube command: {e}", exc_info=True)
-        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
-
 
 # 로또 당첨번호 / 추천번호 추출 START
 # 동행복권 사이트에서 최근 회차 당첨번호 가져오기
@@ -379,7 +276,241 @@ def generate_recommended_set(frequent_numbers, compatibility_numbers):
             set_numbers.append(random.choice(remaining_numbers))
     
     return sorted(set_numbers)
+# 로또 당첨번호 / 추천번호 추출 END
 
+
+# NAVER 뉴스 검색
+@tree.command(name="뉴스", description="네이버 뉴스를 검색합니다.")
+async def news_command(interaction: discord.Interaction, 키워드: str):
+    logging.info(f"News command received with keyword: {키워드}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        keywords = 키워드.split(',')
+        response = f"{', '.join(keywords)} 관련 최신 뉴스입니다.\n"
+    
+        for keyword in keywords:
+            keyword = keyword.strip()
+
+            logging.info(f"Searching for keyword: {keyword}")
+
+            news = await search_naver_news(keyword)
+
+            if news:
+                response += f"\n\n키워드: {keyword}\n"
+                for item in news[:myFile.RESULT_ITEM]:
+                    title = item['title'].replace("<b>", "").replace("</b>", "")
+                    pubDate = datetime.datetime.strptime(item['pubDate'], '%a, %d %b %Y %H:%M:%S %z')
+                    pubDate = pubDate.strftime('%Y-%m-%d %H:%M')
+                    link = item['link']
+                    response += f"\n* 기사: {title}\n* 작성일: {pubDate}\n* 링크: {link}\n"
+            else:
+                response += f"\n\n키워드 '{keyword}'에 대한 뉴스를 찾을 수 없습니다."
+
+        logging.info(f"Response content: {response}")
+        embed = discord.Embed(title="뉴스 검색 결과", description=response, color=0xFFFF00)
+        await interaction.followup.send(embed=embed)
+    
+    except Exception as e:
+        logging.error(f"Error in news command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+# NAVER 블로그 검색
+@tree.command(name="블로그", description="네이버 블로그를 검색합니다.")
+async def blog_command(interaction: discord.Interaction, 키워드: str):
+    logging.info(f"Blog command received with keyword: {키워드}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        keywords = 키워드.split(',')
+        response = f"{', '.join(keywords)} 관련 블로그 포스트입니다.\n"
+        
+        for keyword in keywords:
+            keyword = keyword.strip()
+
+            logging.info(f"Searching for keyword: {keyword}")
+
+            blogs = await search_naver_blog(keyword)
+
+            if blogs:
+                response += f"\n\n키워드: {keyword}\n"
+                for item in blogs[:myFile.RESULT_ITEM]:
+                    bloggername = item['bloggername']
+                    title = item['title'].replace("<b>", "").replace("</b>", "")
+                    link = item['link']
+                    response += f"\n* 블로거: {bloggername}\n* 포스트: {title}\n* 링크: {link}\n"
+            else:
+                response += f"\n\n키워드 '{keyword}'에 대한 블로그 포스트를 찾을 수 없습니다."
+        
+        logging.info(f"Response content: {response}")
+        embed = discord.Embed(title="블로그 검색 결과", description=response, color=0x00FF00)
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        logging.error(f"Error in blog command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+# NAVER 카페 검색
+@tree.command(name="카페", description="네이버 카페를 검색합니다.")
+async def cafe_command(interaction: discord.Interaction, 키워드: str):
+    logging.info(f"Cafe command received with keyword: {키워드}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        keywords = 키워드.split(',')
+        response = f"{', '.join(keywords)} 관련 카페 게시글입니다.\n"
+        
+        for keyword in keywords:
+            keyword = keyword.strip()
+
+            logging.info(f"Searching for keyword: {keyword}")
+
+            cafes = await search_naver_cafe(keyword)
+
+            if cafes:
+                response += f"\n\n키워드: {keyword}\n"
+                for item in cafes[:myFile.RESULT_ITEM]:
+                    cafename = item['cafename']
+                    title = item['title'].replace("<b>", "").replace("</b>", "")
+                    link = item['link']
+                    response += f"\n* 카페명: {cafename}\n* 게시글: {title}\n* 링크: {link}\n"
+            else:
+                response += f"\n\n키워드 '{keyword}'에 대한 카페 게시글을 찾을 수 없습니다."
+        
+        logging.info(f"Response content: {response}")
+        embed = discord.Embed(title="카페 검색 결과", description=response, color=0x0000FF)
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        logging.error(f"Error in cafe command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+# NAVER 쇼핑 검색
+@tree.command(name="쇼핑", description="네이버 쇼핑을 검색합니다.")
+async def shop_command(interaction: discord.Interaction, 키워드: str):
+    logging.info(f"Shop command received with keyword: {키워드}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        keywords = 키워드.split(',')
+        response = f"{', '.join(keywords)} 관련 상품입니다.\n"
+        
+        for keyword in keywords:
+            keyword = keyword.strip()
+
+            logging.info(f"Searching for keyword: {keyword}")
+
+            products = await search_naver_shop(keyword)
+
+            if products:
+                response += f"\n\n키워드: {keyword}\n"
+                for item in products[:myFile.RESULT_ITEM]:
+                    title = item['title'].replace("<b>", "").replace("</b>", "")
+                    mallName = item['mallName']
+                    link = item['link']
+                    response += f"\n* 상품명: {title}\n* 스토어: {mallName}\n* 링크: {link}\n"
+            else:
+                response += f"\n\n키워드 '{keyword}'에 대한 상품을 찾을 수 없습니다."
+        
+        logging.info(f"Response content: {response}")
+        embed = discord.Embed(title="쇼핑 검색 결과", description=response, color=0x800080)
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        logging.error(f"Error in shop command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+# NAVER 데이터랩 검색 (트렌드)
+@tree.command(name="트렌드", description="네이버 데이터랩 검색어 트렌드를 분석합니다.")
+async def trend_command(interaction: discord.Interaction, 키워드: str, 기간: str = "1m"):
+    logging.info(f"Trend command received with keyword: {키워드}, period: {기간}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # 키워드 분리
+        keywords = [k.strip() for k in 키워드.split(',')]
+        if len(keywords) > 5:
+            await interaction.followup.send("비교할 수 있는 키워드는 최대 5개입니다.")
+            return
+        
+        # 기간 설정 (기본: 1개월)
+        today = datetime.date.today()
+        if 기간.endswith('d'):
+            days = int(기간[:-1])
+            start_date = (today - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+        elif 기간.endswith('w'):
+            weeks = int(기간[:-1])
+            start_date = (today - datetime.timedelta(weeks=weeks)).strftime('%Y-%m-%d')
+        elif 기간.endswith('m'):
+            months = int(기간[:-1])
+            start_date = (today - datetime.timedelta(days=30*months)).strftime('%Y-%m-%d')
+        else:
+            await interaction.followup.send("기간 형식이 올바르지 않습니다. 예: 7d, 2w, 1m")
+            return
+        
+        end_date = today.strftime('%Y-%m-%d')
+        
+        # 트렌드 데이터 가져오기
+        trend_data = await get_search_trend(keywords, start_date, end_date)
+        
+        if not trend_data:
+            await interaction.followup.send("트렌드 데이터를 가져오는 데 실패했습니다.")
+            return
+        
+        # 그래프 생성
+        graph_image = await create_trend_graph(trend_data, keywords)
+        
+        # 결과 전송
+        file = discord.File(graph_image, filename="trend_graph.png")
+        embed = discord.Embed(
+            title=f"{', '.join(keywords)} 검색 트렌드", 
+            description=f"{start_date}부터 {end_date}까지의 검색 트렌드 분석입니다.", 
+            color=0xFF00FF
+        )
+        embed.set_image(url="attachment://trend_graph.png")
+        
+        await interaction.followup.send(file=file, embed=embed)
+        
+    except Exception as e:
+        logging.error(f"Error in trend command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+# YouTube 검색
+@tree.command(name="유튜브", description="유튜브를 검색합니다.")
+async def youtube_command(interaction: discord.Interaction, 키워드: str):
+    logging.info(f"YouTube command received with keyword: {키워드}")
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        keywords = 키워드.split(',')
+        response = f"{', '.join(keywords)} 관련 유튜브 동영상입니다.\n"
+        
+        for keyword in keywords:
+            keyword = keyword.strip()
+            
+            logging.info(f"Searching for keyword: {keyword}")
+            
+            videos = await search_youtube(keyword)
+            
+            if videos:
+                response += f"\n\n키워드: {keyword}\n"
+                for item in videos[:myFile.RESULT_ITEM]:
+                    video_title = item['snippet']['title']
+                    channel_title = item['snippet']['channelTitle']
+                    video_link = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
+                    response += f"\n* 제목: {video_title}\n* 채널명: {channel_title}\n* 링크: {video_link}\n"
+            else:
+                response += f"\n\n키워드 '{keyword}'에 대한 유튜브 동영상을 찾을 수 없습니다."
+        
+        logging.info(f"Response content: {response}")
+        embed = discord.Embed(title="유튜브 검색 결과", description=response, color=0xFF0000)
+        await interaction.followup.send(embed=embed)
+    
+    except Exception as e:
+        logging.error(f"Error in YouTube command: {e}", exc_info=True)
+        await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
+
+# 로또 당첨번호 / 추천번호 검색
 @tree.command(name="로또", description="키워드에 '당첨번호' 또는 '추천번호'를 입력하세요. 최근 당첨번호 확인 및 추천번호를 생성합니다.")
 async def lotto(interaction: discord.Interaction, 키워드: str):
     if 키워드 not in ["당첨번호", "추천번호"]:
@@ -419,7 +550,6 @@ async def lotto(interaction: discord.Interaction, 키워드: str):
     except Exception as e:
         logging.error(f"Error in YouTube command: {e}", exc_info=True)
         await interaction.followup.send("명령어 처리 중 오류가 발생했습니다.", ephemeral=True)
-# 로또 당첨번호 / 추천번호 추출 END
 
 
 @client.event
