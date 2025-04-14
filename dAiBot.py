@@ -6,6 +6,8 @@ import json
 import random
 import datetime
 import myFile
+import matplotlib
+matplotlib.use('Agg')  # 그래픽 디스플레이가 없는 환경에서 사용
 import matplotlib.pyplot as plt
 import io
 from discord import app_commands
