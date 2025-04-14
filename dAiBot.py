@@ -213,26 +213,25 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
     # 세션 생성
     session = requests.Session()
     
-    # 로그인 처리
-    if naver_id and naver_pw:
-        login_result = naver_login(session, naver_id, naver_pw)
-        if not login_result:
-            logging.warning("네이버 로그인 실패, 비로그인 상태로 진행합니다.")
-    
+    # 기본 헤더 설정 - 더 현실적인 브라우저 환경 모방
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://cafe.naver.com/',
-        'sec-ch-ua': '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"',
+        'Connection': 'keep-alive',
+        'sec-ch-ua': '"Google Chrome";v="121", "Not A(Brand";v="99", "Chromium";v="121"',
         'sec-ch-ua-mobile': '?0',
         'sec-ch-ua-platform': '"Windows"',
-        'X-Requested-With': 'XMLHttpRequest'
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'none',
+        'sec-fetch-user': '?1',
+        'upgrade-insecure-requests': '1'
     }
     
     try:
         # 메인 페이지 접속하여 세션 쿠키 설정
-        main_url = f"https://cafe.naver.com/{cafe_info['id']}"
+        main_url = f"https://cafe.naver.com/{cafe_info['id']}?iframe_url=/ArticleList.nhn?search.clubid={numeric_cafe_id}"
         main_response = session.get(main_url, headers=headers)
         
         if main_response.status_code != 200:
@@ -241,36 +240,235 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
         # HTML에서 필요한 파라미터 추출
         main_soup = BeautifulSoup(main_response.text, 'html.parser')
         
-        # 방법 1: API 요청을 통해 인기글 가져오기
-        api_url = f"https://cafe.naver.com/article-list-api/cafes/{numeric_cafe_id}/articles/popular?page=1&perPage=20"
+        # 방법 1: 모바일 페이지 접근 (PC 접근보다 구조가 단순하고 크롤링 방지가 약함)
+        mobile_url = f"https://m.cafe.naver.com/{cafe_info['id']}/ArticleList.nhn?search.clubid={numeric_cafe_id}&search.boardtype=L"
+        logging.info(f"Accessing mobile page: {mobile_url}")
+        
+        mobile_headers = headers.copy()
+        mobile_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/121.0.0.0 Mobile/15E148 Safari/604.1'
+        
+        mobile_response = session.get(mobile_url, headers=mobile_headers)
+        logging.info(f"Mobile page response status: {mobile_response.status_code}")
+        
+        if mobile_response.status_code == 200:
+            mobile_soup = BeautifulSoup(mobile_response.text, 'html.parser')
+            
+            # 모바일 페이지에서 인기글 목록 찾기
+            article_items = mobile_soup.select('li.article_item') or mobile_soup.select('.article_list li')
+            
+            logging.info(f"Found {len(article_items)} article elements on mobile page")
+            
+            if article_items:
+                hot_posts = []
+                for idx, article in enumerate(article_items[:myFile.HOT_POSTS_COUNT]):
+                    try:
+                        # 제목 추출
+                        title_elem = article.select_one('.article_title') or article.select_one('.tit') or article.select_one('a')
+                        if not title_elem:
+                            continue
+                            
+                        title = title_elem.get_text().strip()
+                        
+                        # 링크 추출
+                        href = title_elem.get('href', '')
+                        article_id = ''
+                        
+                        # 상대 URL을 절대 URL로 변환
+                        if href.startswith('/'):
+                            article_link = f"https://cafe.naver.com{href}"
+                        else:
+                            article_link = f"https://cafe.naver.com/{cafe_info['id']}/{href}"
+                        
+                        # 숫자만 추출하여 ID 가져오기
+                        if 'articleid=' in href:
+                            article_id = re.search(r'articleid=(\d+)', href).group(1)
+                        elif 'articleId=' in href:
+                            article_id = re.search(r'articleId=(\d+)', href).group(1)
+                        elif re.search(r'/(\d+)(?:\?|$)', href):
+                            article_id = re.search(r'/(\d+)(?:\?|$)', href).group(1)
+                            
+                        if article_id:
+                            article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
+                        
+                        # 조회수
+                        view_count = "알 수 없음"
+                        view_elem = article.select_one('.article_info .view') or article.select_one('.view_count') or article.select_one('.td_view')
+                        if view_elem:
+                            view_text = view_elem.get_text().strip()
+                            view_count = re.search(r'\d+', view_text).group(0) if re.search(r'\d+', view_text) else view_text
+                        
+                        # 날짜
+                        date_info = "알 수 없음"
+                        date_elem = article.select_one('.article_info .date') or article.select_one('.td_date')
+                        if date_elem:
+                            date_info = date_elem.get_text().strip()
+                        
+                        # 작성자
+                        nickname = "알 수 없음"
+                        nick_elem = article.select_one('.article_info .nickname') or article.select_one('.p-nick') or article.select_one('.writer')
+                        if nick_elem:
+                            nickname = nick_elem.get_text().strip()
+                        
+                        # 댓글 수
+                        comment_count = "0"
+                        comment_elem = article.select_one('.comment_count') or article.select_one('.cmt') or article.select_one('.comment')
+                        if comment_elem:
+                            comment_text = comment_elem.get_text().strip()
+                            comment_match = re.search(r'\d+', comment_text)
+                            if comment_match:
+                                comment_count = comment_match.group(0)
+                        
+                        hot_posts.append({
+                            'title': title,
+                            'link': article_link,
+                            'view_count': view_count,
+                            'date': date_info,
+                            'author': nickname,
+                            'comment_count': comment_count
+                        })
+                    except Exception as e:
+                        logging.error(f"Error parsing mobile article {idx}: {e}", exc_info=True)
+                        continue
+                
+                if hot_posts:
+                    return hot_posts, None
+        
+        # 방법 2: PC 페이지에서 프레임 직접 접근
+        pc_url = f"https://cafe.naver.com/{cafe_info['id']}/ArticleList.nhn?search.clubid={numeric_cafe_id}&search.boardtype=L"
+        logging.info(f"Accessing PC page: {pc_url}")
+        
+        pc_response = session.get(pc_url, headers=headers)
+        logging.info(f"PC page response status: {pc_response.status_code}")
+        
+        if pc_response.status_code == 200:
+            pc_soup = BeautifulSoup(pc_response.text, 'html.parser')
+            
+            # iframe URL 찾기
+            iframe = pc_soup.select_one('#cafe_main')
+            
+            if iframe and iframe.get('src'):
+                iframe_url = f"https://cafe.naver.com{iframe.get('src')}"
+                logging.info(f"Found iframe URL: {iframe_url}")
+                
+                iframe_response = session.get(iframe_url, headers=headers)
+                
+                if iframe_response.status_code == 200:
+                    iframe_soup = BeautifulSoup(iframe_response.text, 'html.parser')
+                    
+                    # 테이블 형식의 게시글 목록 찾기
+                    article_rows = iframe_soup.select('.article-board .list-type-h tbody tr:not(.notice)') or \
+                                  iframe_soup.select('.article-board table tbody tr') or \
+                                  iframe_soup.select('.board-box') or \
+                                  iframe_soup.select('li.article-list')
+                    
+                    logging.info(f"Found {len(article_rows)} article elements in iframe")
+                    
+                    if article_rows:
+                        hot_posts = []
+                        for idx, article in enumerate(article_rows[:myFile.HOT_POSTS_COUNT]):
+                            try:
+                                # 제목 추출
+                                title_elem = article.select_one('.article') or article.select_one('a.article-title') or article.select_one('.subject a')
+                                if not title_elem:
+                                    continue
+                                    
+                                title = title_elem.get_text().strip()
+                                href = title_elem.get('href', '')
+                                
+                                # 상대 URL을 절대 URL로 변환
+                                article_id = ''
+                                
+                                # ID 추출
+                                if re.search(r'articleid=(\d+)', href):
+                                    article_id = re.search(r'articleid=(\d+)', href).group(1)
+                                elif re.search(r'articleId=(\d+)', href):
+                                    article_id = re.search(r'articleId=(\d+)', href).group(1)
+                                elif re.search(r'/(\d+)(?:\?|$)', href):
+                                    article_id = re.search(r'/(\d+)(?:\?|$)', href).group(1)
+                                
+                                if article_id:
+                                    article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
+                                else:
+                                    if href.startswith('/'):
+                                        article_link = f"https://cafe.naver.com{href}"
+                                    else:
+                                        article_link = f"https://cafe.naver.com/{cafe_info['id']}/{href}"
+                                
+                                # 조회수
+                                view_count = "알 수 없음"
+                                view_elem = article.select_one('.view-count') or article.select_one('.td_view')
+                                if view_elem:
+                                    view_count = view_elem.get_text().strip()
+                                
+                                # 날짜
+                                date_info = "알 수 없음"
+                                date_elem = article.select_one('.date') or article.select_one('.td_date')
+                                if date_elem:
+                                    date_info = date_elem.get_text().strip()
+                                
+                                # 작성자
+                                nickname = "알 수 없음"
+                                nick_elem = article.select_one('.nickname') or article.select_one('.p-nick') or article.select_one('.writer')
+                                if nick_elem:
+                                    nickname = nick_elem.get_text().strip()
+                                
+                                # 댓글 수
+                                comment_count = "0"
+                                comment_elem = article.select_one('.cmt') or article.select_one('.comment')
+                                if comment_elem:
+                                    comment_match = re.search(r'\[(\d+)\]', comment_elem.get_text())
+                                    if comment_match:
+                                        comment_count = comment_match.group(1)
+                                
+                                hot_posts.append({
+                                    'title': title,
+                                    'link': article_link,
+                                    'view_count': view_count,
+                                    'date': date_info,
+                                    'author': nickname,
+                                    'comment_count': comment_count
+                                })
+                            except Exception as e:
+                                logging.error(f"Error parsing iframe article {idx}: {e}", exc_info=True)
+                                continue
+                        
+                        if hot_posts:
+                            return hot_posts, None
+        
+        # 방법 3: 웹페이지 내용 변경에 대비하여 실패한 HTML 저장 및 디버깅
+        with open('debug_cafe_html.html', 'w', encoding='utf-8') as f:
+            f.write(pc_response.text)
+        
+        # API 경로 재시도 (최근 네이버 카페 구조에 맞춤)
+        new_api_url = f"https://apis.naver.com/cafe-web/cafe2/ArticleListV2.json?search.clubid={numeric_cafe_id}&search.queryType=title&search.boardtype=L&search.page=1&search.perPage={myFile.HOT_POSTS_COUNT}"
         api_headers = headers.copy()
         api_headers['Accept'] = 'application/json, text/plain, */*'
+        api_headers['referer'] = f"https://cafe.naver.com/{cafe_info['id']}"
         
-        logging.info(f"Accessing API: {api_url}")
-        api_response = session.get(api_url, headers=api_headers)
+        logging.info(f"Trying new API endpoint: {new_api_url}")
+        api_response = session.get(new_api_url, headers=api_headers)
         
         if api_response.status_code == 200:
             try:
-                # JSON 응답 파싱
                 data = api_response.json()
-                if 'message' in data and data['message'].get('result', {}).get('articles'):
-                    articles = data['message']['result']['articles']
+                if 'message' in data and data['message'].get('result', {}).get('articleList'):
+                    articles = data['message']['result']['articleList']
                     
                     hot_posts = []
                     for article in articles[:myFile.HOT_POSTS_COUNT]:
                         try:
                             title = article.get('subject', '')
-                            article_id = article.get('id', '')
+                            article_id = article.get('articleId', '')
                             article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
                             view_count = article.get('readCount', 0)
                             date_info = article.get('writeDateTimestamp', '')
                             
-                            # 날짜 형식 변환 (Unix timestamp -> 표시 형식)
+                            # 날짜 형식 변환
                             if date_info:
-                                date_obj = datetime.fromtimestamp(date_info / 1000)  # milliseconds -> seconds
+                                date_obj = datetime.fromtimestamp(date_info / 1000)
                                 date_info = date_obj.strftime('%Y.%m.%d.')
                             
-                            nickname = article.get('memberNickname', '')
+                            nickname = article.get('writerNickname', '')
                             comment_count = article.get('commentCount', 0)
                             
                             hot_posts.append({
@@ -282,7 +480,7 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
                                 'comment_count': str(comment_count)
                             })
                         except Exception as e:
-                            logging.error(f"Error parsing article: {e}", exc_info=True)
+                            logging.error(f"Error parsing API article: {e}", exc_info=True)
                             continue
                     
                     if hot_posts:
@@ -290,100 +488,8 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
             except json.JSONDecodeError as e:
                 logging.error(f"Failed to parse API response as JSON: {e}")
         
-        # 방법 2: 인기글 페이지 HTML 직접 크롤링 (방법 1 실패시)
-        popular_url = f"https://cafe.naver.com/{cafe_info['id']}/ArticleList.nhn?search.clubid={numeric_cafe_id}&search.boardtype=L"
-        logging.info(f"Accessing popular page: {popular_url}")
-        
-        response = session.get(popular_url, headers=headers)
-        logging.info(f"Popular page response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            return None, f"{cafe_info['description']} 카페 인기글 페이지에 접근할 수 없습니다."
-        
-        # 프레임 ID 찾기
-        soup = BeautifulSoup(response.text, 'html.parser')
-        frame = soup.select_one('#cafe_main')
-        
-        if frame and frame.get('src'):
-            frame_url = f"https://cafe.naver.com{frame.get('src')}"
-            frame_response = session.get(frame_url, headers=headers)
-            
-            if frame_response.status_code == 200:
-                frame_soup = BeautifulSoup(frame_response.text, 'html.parser')
-                
-                # 게시글 파싱
-                article_rows = frame_soup.select('tr.board-box')
-                
-                if not article_rows:
-                    article_rows = frame_soup.select('li.article-list')
-                
-                logging.info(f"Found {len(article_rows)} article elements in frame")
-                
-                hot_posts = []
-                for idx, article in enumerate(article_rows[:myFile.HOT_POSTS_COUNT]):
-                    try:
-                        # 새로운 UI에서는 li 태그
-                        title_elem = article.select_one('.article') or article.select_one('a.article-title')
-                        if not title_elem:
-                            continue
-                            
-                        title = title_elem.get_text().strip()
-                        href = title_elem.get('href', '')
-                        
-                        # 상대 URL을 절대 URL로 변환
-                        if href.startswith('/'):
-                            article_link = f"https://cafe.naver.com{href}"
-                        else:
-                            article_link = f"https://cafe.naver.com/{href}"
-                        
-                        # 조회수
-                        view_count = "알 수 없음"
-                        view_elem = article.select_one('.view-count') or article.select_one('.td_view')
-                        if view_elem:
-                            view_count = view_elem.get_text().strip()
-                        
-                        # 날짜
-                        date_info = "알 수 없음"
-                        date_elem = article.select_one('.date') or article.select_one('.td_date')
-                        if date_elem:
-                            date_info = date_elem.get_text().strip()
-                        
-                        # 작성자
-                        nickname = "알 수 없음"
-                        nick_elem = article.select_one('.nickname') or article.select_one('.p-nick')
-                        if nick_elem:
-                            nickname = nick_elem.get_text().strip()
-                        
-                        # 댓글 수
-                        comment_count = "0"
-                        comment_elem = article.select_one('.cmt') or article.select_one('.comment')
-                        if comment_elem:
-                            comment_match = re.search(r'\[(\d+)\]', comment_elem.get_text())
-                            if comment_match:
-                                comment_count = comment_match.group(1)
-                        
-                        hot_posts.append({
-                            'title': title,
-                            'link': article_link,
-                            'view_count': view_count,
-                            'date': date_info,
-                            'author': nickname,
-                            'comment_count': comment_count
-                        })
-                    except Exception as e:
-                        logging.error(f"Error parsing article {idx}: {e}", exc_info=True)
-                        continue
-                
-                if hot_posts:
-                    return hot_posts, None
-        
-        # 방법 3: 직접 페이지 파싱 (이전 방법 모두 실패시)
-        # 디버깅을 위해 HTML 저장
-        with open('debug_cafe_html.html', 'w', encoding='utf-8') as f:
-            f.write(response.text)
-        
         logging.error(f"Failed to parse {cafe_info['description']} cafe. HTML saved to debug_cafe_html.html")
-        return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다. HTML 구조가 변경되었을 수 있습니다."
+        return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다. 네이버 페이지 구조가 변경되었을 가능성이 높습니다."
         
     except Exception as e:
         logging.error(f"Error crawling cafe hot posts: {e}", exc_info=True)
