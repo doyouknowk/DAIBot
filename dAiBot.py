@@ -337,10 +337,22 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
             iframe = pc_soup.select_one('#cafe_main')
             
             if iframe and iframe.get('src'):
-                iframe_url = f"https://cafe.naver.com{iframe.get('src')}"
-                logging.info(f"Found iframe URL: {iframe_url}")
-                
-                iframe_response = session.get(iframe_url, headers=headers)
+                iframe_src = iframe.get('src')
+                if iframe_src:
+                    # URL 형식에 따른 처리
+                    if iframe_src.startswith('//'):
+                        iframe_url = f"https:{iframe_src}"
+                    elif iframe_src.startswith('http'):
+                        iframe_url = iframe_src
+                    else:
+                        iframe_url = f"https://cafe.naver.com{iframe_src}"
+                    
+                    logging.info(f"Found iframe URL: {iframe_url}")
+                    
+                    iframe_response = session.get(iframe_url, headers=headers)
+                else:
+                    logging.error("No src attribute found in iframe")
+                    return None, "iframe의 src 속성을 찾을 수 없습니다."
                 
                 if iframe_response.status_code == 200:
                     iframe_soup = BeautifulSoup(iframe_response.text, 'html.parser')
