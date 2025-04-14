@@ -41,7 +41,7 @@ async def search_naver_news(keyword):
     params = {
         "query": keyword,
         "sort": "date",
-        "display": 3
+        "display": myFile.RESULT_ITEM
     }
     
     response = requests.get(url, headers=headers, params=params)
@@ -62,7 +62,7 @@ async def search_naver_blog(keyword):
     params = {
         "query": keyword,
         "sort": "sim",
-        "display": 3
+        "display": myFile.RESULT_ITEM
     }
     
     response = requests.get(url, headers=headers, params=params)
@@ -83,7 +83,7 @@ async def search_naver_cafe(keyword):
     params = {
         "query": keyword,
         "sort": "sim",
-        "display": 3
+        "display": myFile.RESULT_ITEM
     }
     
     response = requests.get(url, headers=headers, params=params)
@@ -104,7 +104,7 @@ async def search_naver_shop(keyword):
     params = {
         "query": keyword,
         "sort": "sim",
-        "display": 5
+        "display": myFile.RESULT_ITEM
     }
     
     response = requests.get(url, headers=headers, params=params)
@@ -122,7 +122,7 @@ async def search_youtube(keyword):
         q=keyword,
         type='video',
         part='id,snippet',
-        maxResults=3
+        maxResults=myFile.RESULT_ITEM
     ).execute()
     
     return search_response.get('items', [])
@@ -145,7 +145,7 @@ async def news_command(interaction: discord.Interaction, 키워드: str):
 
             if news:
                 response += f"\n\n키워드: {keyword}\n"
-                for item in news[:3]:
+                for item in news[:myFile.RESULT_ITEM]:
                     title = item['title'].replace("<b>", "").replace("</b>", "")
                     pubDate = datetime.datetime.strptime(item['pubDate'], '%a, %d %b %Y %H:%M:%S %z')
                     pubDate = pubDate.strftime('%Y-%m-%d %H:%M')
@@ -180,7 +180,7 @@ async def blog_command(interaction: discord.Interaction, 키워드: str):
 
             if blogs:
                 response += f"\n\n키워드: {keyword}\n"
-                for item in blogs[:3]:
+                for item in blogs[:myFile.RESULT_ITEM]:
                     bloggername = item['bloggername']
                     title = item['title'].replace("<b>", "").replace("</b>", "")
                     link = item['link']
@@ -214,7 +214,7 @@ async def cafe_command(interaction: discord.Interaction, 키워드: str):
 
             if cafes:
                 response += f"\n\n키워드: {keyword}\n"
-                for item in cafes[:3]:
+                for item in cafes[:myFile.RESULT_ITEM]:
                     cafename = item['cafename']
                     title = item['title'].replace("<b>", "").replace("</b>", "")
                     link = item['link']
@@ -248,7 +248,7 @@ async def shop_command(interaction: discord.Interaction, 키워드: str):
 
             if products:
                 response += f"\n\n키워드: {keyword}\n"
-                for item in products[:5]:
+                for item in products[:myFile.RESULT_ITEM]:
                     title = item['title'].replace("<b>", "").replace("</b>", "")
                     mallName = item['mallName']
                     link = item['link']
@@ -282,7 +282,7 @@ async def youtube_command(interaction: discord.Interaction, 키워드: str):
             
             if videos:
                 response += f"\n\n키워드: {keyword}\n"
-                for item in videos[:3]:
+                for item in videos[:myFile.RESULT_ITEM]:
                     video_title = item['snippet']['title']
                     channel_title = item['snippet']['channelTitle']
                     video_link = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
