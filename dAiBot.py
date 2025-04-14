@@ -230,19 +230,9 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
     }
     
     try:
-        # 메인 페이지 접속하여 세션 쿠키 설정
-        main_url = f"https://cafe.naver.com/{cafe_info['id']}?iframe_url=/ArticleList.nhn?search.clubid={numeric_cafe_id}"
-        main_response = session.get(main_url, headers=headers)
-        
-        if main_response.status_code != 200:
-            return None, f"{cafe_info['description']} 카페 접속에 실패했습니다."
-        
-        # HTML에서 필요한 파라미터 추출
-        main_soup = BeautifulSoup(main_response.text, 'html.parser')
-        
-        # 방법 1: 모바일 페이지 접근 (PC 접근보다 구조가 단순하고 크롤링 방지가 약함)
-        mobile_url = f"https://m.cafe.naver.com/{cafe_info['id']}/ArticleList.nhn?search.clubid={numeric_cafe_id}&search.boardtype=L"
-        logging.info(f"Accessing mobile page: {mobile_url}")
+        # 방법 1: 모바일 페이지 접근 (인기글 탭)
+        mobile_url = f"https://m.cafe.naver.com/ca-fe/{cafe_info['id']}?tab=popular"
+        logging.info(f"Accessing mobile popular page: {mobile_url}")
         
         mobile_headers = headers.copy()
         mobile_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/121.0.0.0 Mobile/15E148 Safari/604.1'
@@ -256,7 +246,7 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
             # 모바일 페이지에서 인기글 목록 찾기
             article_items = mobile_soup.select('li.article_item') or mobile_soup.select('.article_list li')
             
-            logging.info(f"Found {len(article_items)} article elements on mobile page")
+            logging.info(f"Found {len(article_items)} article elements on mobile popular page")
             
             if article_items:
                 hot_posts = []
@@ -333,12 +323,12 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
                 if hot_posts:
                     return hot_posts, None
         
-        # 방법 2: PC 페이지에서 프레임 직접 접근
-        pc_url = f"https://cafe.naver.com/{cafe_info['id']}/ArticleList.nhn?search.clubid={numeric_cafe_id}&search.boardtype=L"
-        logging.info(f"Accessing PC page: {pc_url}")
+        # 방법 2: PC 페이지 인기글 탭 직접 접근
+        pc_url = f"https://cafe.naver.com/f-e/cafes/{numeric_cafe_id}/popular"
+        logging.info(f"Accessing PC popular page: {pc_url}")
         
         pc_response = session.get(pc_url, headers=headers)
-        logging.info(f"PC page response status: {pc_response.status_code}")
+        logging.info(f"PC popular page response status: {pc_response.status_code}")
         
         if pc_response.status_code == 200:
             pc_soup = BeautifulSoup(pc_response.text, 'html.parser')
@@ -435,18 +425,14 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
                         if hot_posts:
                             return hot_posts, None
         
-        # 방법 3: 웹페이지 내용 변경에 대비하여 실패한 HTML 저장 및 디버깅
-        with open('debug_cafe_html.html', 'w', encoding='utf-8') as f:
-            f.write(pc_response.text)
-        
-        # API 경로 재시도 (최근 네이버 카페 구조에 맞춤)
-        new_api_url = f"https://apis.naver.com/cafe-web/cafe2/ArticleListV2.json?search.clubid={numeric_cafe_id}&search.queryType=title&search.boardtype=L&search.page=1&search.perPage={myFile.HOT_POSTS_COUNT}"
+        # 방법 3: API 접근 (인기글 탭)
+        api_url = f"https://apis.naver.com/cafe-web/cafe2/ArticleListV2Popular.json?search.clubid={numeric_cafe_id}&search.page=1&search.perPage={myFile.HOT_POSTS_COUNT}"
         api_headers = headers.copy()
         api_headers['Accept'] = 'application/json, text/plain, */*'
-        api_headers['referer'] = f"https://cafe.naver.com/{cafe_info['id']}"
+        api_headers['referer'] = f"https://cafe.naver.com/f-e/cafes/{numeric_cafe_id}/popular"
         
-        logging.info(f"Trying new API endpoint: {new_api_url}")
-        api_response = session.get(new_api_url, headers=api_headers)
+        logging.info(f"Trying Popular API endpoint: {api_url}")
+        api_response = session.get(api_url, headers=api_headers)
         
         if api_response.status_code == 200:
             try:
@@ -488,7 +474,11 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
             except json.JSONDecodeError as e:
                 logging.error(f"Failed to parse API response as JSON: {e}")
         
-        logging.error(f"Failed to parse {cafe_info['description']} cafe. HTML saved to debug_cafe_html.html")
+        # 디버깅을 위해 HTML 저장
+        with open('debug_cafe_html.html', 'w', encoding='utf-8') as f:
+            f.write(pc_response.text)
+        
+        logging.error(f"Failed to parse {cafe_info['description']} cafe popular posts. HTML saved to debug_cafe_html.html")
         return None, f"{cafe_info['description']} 카페에서 인기글을 찾을 수 없습니다. 네이버 페이지 구조가 변경되었을 가능성이 높습니다."
         
     except Exception as e:
