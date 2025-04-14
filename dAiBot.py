@@ -448,41 +448,77 @@ async def crawl_naver_cafe_hot_posts(cafe_alias, naver_id=None, naver_pw=None):
         
         if api_response.status_code == 200:
             try:
-                data = api_response.json()
-                if 'message' in data and data['message'].get('result', {}).get('articleList'):
-                    articles = data['message']['result']['articleList']
+                # JSON 응답인지 확인하고 파싱
+                content_type = api_response.headers.get('Content-Type', '')
+                if 'application/json' in content_type:
+                    data = api_response.json()
+                else:
+                    # JSON이 아닌 경우 텍스트에서 JSON 추출 시도
+                    text_content = api_response.text
+                    try:
+                        import json
+                        # JSON 문자열을 찾아 파싱 시도
+                        json_start = text_content.find('{')
+                        json_end = text_content.rfind('}') + 1
+                        if json_start >= 0 and json_end > json_start:
+                            json_str = text_content[json_start:json_end]
+                            data = json.loads(json_str)
+                        else:
+                            raise ValueError("JSON 콘텐츠를 찾을 수 없습니다")
+                    except json.JSONDecodeError:
+                        raise ValueError("응답을 JSON으로 파싱할 수 없습니다")
+                
+                # 데이터 구조 안전하게 확인
+                if isinstance(data, dict) and 'message' in data:
+                    message = data['message']
+                    if isinstance(message, dict) and 'result' in message:
+                        result = message['result']
+                        if isinstance(result, dict) and 'articleList' in result:
+                            articles = result['articleList']
                     
-                    hot_posts = []
-                    for article in articles[:myFile.HOT_POSTS_COUNT]:
-                        try:
-                            title = article.get('subject', '')
-                            article_id = article.get('articleId', '')
-                            article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
-                            view_count = article.get('readCount', 0)
-                            date_info = article.get('writeDateTimestamp', '')
+                            hot_posts = []
+                            for article in articles[:myFile.HOT_POSTS_COUNT]:
+                                try:
+                                    title = article.get('subject', '')
+                                    article_id = article.get('articleId', '')
+                                    article_link = f"https://cafe.naver.com/{cafe_info['id']}/{article_id}"
+                                    view_count = article.get('readCount', 0)
+                                    date_info = article.get('writeDateTimestamp', '')
+                                    
+                                    # 날짜 형식 변환
+                                    if date_info:
+                                        date_obj = datetime.fromtimestamp(date_info / 1000)
+                                        date_info = date_obj.strftime('%Y.%m.%d.')
+                                    
+                                    nickname = article.get('writerNickname', '')
+                                    comment_count = article.get('commentCount', 0)
+                                    
+                                    hot_posts.append({
+                                        'title': title,
+                                        'link': article_link,
+                                        'view_count': str(view_count),
+                                        'date': date_info,
+                                        'author': nickname,
+                                        'comment_count': str(comment_count)
+                                    })
+                                except Exception as e:
+                                    logging.error(f"Error parsing API article: {e}", exc_info=True)
+                                    continue
                             
-                            # 날짜 형식 변환
-                            if date_info:
-                                date_obj = datetime.fromtimestamp(date_info / 1000)
-                                date_info = date_obj.strftime('%Y.%m.%d.')
+                            if hot_posts:
+                                return hot_posts, None
                             
-                            nickname = article.get('writerNickname', '')
-                            comment_count = article.get('commentCount', 0)
-                            
-                            hot_posts.append({
-                                'title': title,
-                                'link': article_link,
-                                'view_count': str(view_count),
-                                'date': date_info,
-                                'author': nickname,
-                                'comment_count': str(comment_count)
-                            })
-                        except Exception as e:
-                            logging.error(f"Error parsing API article: {e}", exc_info=True)
-                            continue
-                    
-                    if hot_posts:
-                        return hot_posts, None
+                        else:
+                            logging.error("articleList를 찾을 수 없습니다")
+                            raise ValueError("articleList를 찾을 수 없습니다")
+                    else:
+                        logging.error("result를 찾을 수 없습니다")
+                        raise ValueError("result를 찾을 수 없습니다")
+                else:
+                    logging.error("응답 데이터에 message 필드가 없습니다")
+                    logging.debug(f"응답 데이터: {data}")
+                    raise ValueError("응답 데이터에 message 필드가 없습니다")
+
             except json.JSONDecodeError as e:
                 logging.error(f"Failed to parse API response as JSON: {e}")
         
