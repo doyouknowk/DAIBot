@@ -155,25 +155,21 @@ async def get_search_trend(keywords, start_date, end_date):
 # 트렌드 그래프의 한글 폰트 설정
 def set_korean_font():
     try:
-        import os
-        from matplotlib import font_manager, rc
-        
-        # 폰트 경로 설정
+        # 한글 폰트 경로 지정
         font_path = './NotoSansKR-Regular.ttf'
         
-        # 폰트 직접 등록
-        font_name = font_manager.FontProperties(fname=font_path).get_name()
-        rc('font', family=font_name)
+        # 폰트 속성 객체 생성
+        font_prop = fm.FontProperties(fname=font_path)
+        
+        # 폰트 설정
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = [font_prop.get_name()] + plt.rcParams['font.sans-serif']
         plt.rcParams['axes.unicode_minus'] = False
         
-        print(f"Font set to: {font_name}")
+        print(f"Font set with name: {font_prop.get_name()}")
         return True
     except Exception as e:
         print(f"폰트 설정 오류: {e}")
-        
-        # 폰트 설치 실패 시 기본 폰트 사용
-        plt.rcParams['font.family'] = 'DejaVu Sans'
-        plt.rcParams['axes.unicode_minus'] = False
         return False
 
 # 검색어 트렌드 그래프 생성
