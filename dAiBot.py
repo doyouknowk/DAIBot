@@ -156,28 +156,24 @@ async def get_search_trend(keywords, start_date, end_date):
 def set_korean_font():
     try:
         import os
-        print(f"Current directory: {os.getcwd()}")
+        from matplotlib import font_manager, rc
         
-        # 폰트 파일 경로 설정
-        font_path = './NotoSansKR-Regular.ttf'  # Regular 폰트를 사용합니다
-        print(f"Using font path: {font_path}")
+        # 폰트 경로 설정
+        font_path = './NotoSansKR-Regular.ttf'
         
-        # FontProperties 객체 생성
-        font_prop = fm.FontProperties(fname=font_path)
-        
-        # 폰트 매니저에 폰트 직접 추가
-        fm.fontManager.addfont(font_path)
-        fm.fontManager._rebuild()
-        
-        # 폰트 설정 - 폰트 패밀리를 파일 이름에서 추출하지 않고 직접 지정
-        plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Noto Sans KR'] + plt.rcParams['font.sans-serif']
+        # 폰트 직접 등록
+        font_name = font_manager.FontProperties(fname=font_path).get_name()
+        rc('font', family=font_name)
         plt.rcParams['axes.unicode_minus'] = False
         
-        print(f"Font settings completed with Noto Sans KR")
+        print(f"Font set to: {font_name}")
         return True
     except Exception as e:
         print(f"폰트 설정 오류: {e}")
+        
+        # 폰트 설치 실패 시 기본 폰트 사용
+        plt.rcParams['font.family'] = 'DejaVu Sans'
+        plt.rcParams['axes.unicode_minus'] = False
         return False
 
 # 검색어 트렌드 그래프 생성
