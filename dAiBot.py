@@ -154,41 +154,15 @@ async def get_search_trend(keywords, start_date, end_date):
 
 # 트렌드 그래프의 한글 폰트 설정
 def set_korean_font():
-    # 서버 환경에 따라 다음 방법들 중 하나를 사용
-    
-    # 방법 1: 시스템에 설치된 한글 폰트 사용
     try:
-        # 나눔고딕 등 한글 폰트 경로 찾기 (경로는 서버 환경에 따라 다를 수 있음)
-        font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'  # 우분투 기준
+        # 프로젝트 내 폰트 파일 경로
+        font_path = './NotoSansKR-VariableFont_wght.ttf'  # 경로
         font_prop = fm.FontProperties(fname=font_path)
         plt.rcParams['font.family'] = font_prop.get_name()
-        plt.rcParams['axes.unicode_minus'] = False  # 마이너스 기호 표시를 위한 설정
-        return True
-    except:
-        pass
-    
-    # 방법 2: matplotlib에 내장된 폰트 중 한글 지원하는 폰트 찾기
-    try:
-        # 서버에 설치된 폰트 목록 확인
-        fonts = [f.name for f in fm.fontManager.ttflist]
-        
-        # 한글 지원 가능한 폰트 찾기 (일반적으로 사용되는 폰트 이름)
-        korean_fonts = ['NanumGothic', 'Malgun Gothic', 'AppleGothic', 'Dotum', 'Gulim']
-        
-        for font in korean_fonts:
-            if font in fonts:
-                plt.rcParams['font.family'] = font
-                plt.rcParams['axes.unicode_minus'] = False
-                return True
-    except:
-        pass
-    
-    # 방법 3: 기본 폰트셋 사용 시도
-    try:
-        plt.rcParams['font.family'] = 'DejaVu Sans'
         plt.rcParams['axes.unicode_minus'] = False
         return True
-    except:
+    except Exception as e:
+        print(f"폰트 설정 오류: {e}")
         return False
 
 # 검색어 트렌드 그래프 생성
