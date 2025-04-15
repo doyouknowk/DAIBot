@@ -9,6 +9,7 @@ import myFile
 import matplotlib
 matplotlib.use('Agg')  # 그래픽 디스플레이가 없는 환경에서 사용
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import io
 from discord import app_commands
 from googleapiclient.discovery import build
@@ -151,8 +152,50 @@ async def get_search_trend(keywords, start_date, end_date):
     else:
         return None
 
+# 트렌드 그래프의 한글 폰트 설정
+def set_korean_font():
+    # 서버 환경에 따라 다음 방법들 중 하나를 사용
+    
+    # 방법 1: 시스템에 설치된 한글 폰트 사용
+    try:
+        # 나눔고딕 등 한글 폰트 경로 찾기 (경로는 서버 환경에 따라 다를 수 있음)
+        font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'  # 우분투 기준
+        font_prop = fm.FontProperties(fname=font_path)
+        plt.rcParams['font.family'] = font_prop.get_name()
+        plt.rcParams['axes.unicode_minus'] = False  # 마이너스 기호 표시를 위한 설정
+        return True
+    except:
+        pass
+    
+    # 방법 2: matplotlib에 내장된 폰트 중 한글 지원하는 폰트 찾기
+    try:
+        # 서버에 설치된 폰트 목록 확인
+        fonts = [f.name for f in fm.fontManager.ttflist]
+        
+        # 한글 지원 가능한 폰트 찾기 (일반적으로 사용되는 폰트 이름)
+        korean_fonts = ['NanumGothic', 'Malgun Gothic', 'AppleGothic', 'Dotum', 'Gulim']
+        
+        for font in korean_fonts:
+            if font in fonts:
+                plt.rcParams['font.family'] = font
+                plt.rcParams['axes.unicode_minus'] = False
+                return True
+    except:
+        pass
+    
+    # 방법 3: 기본 폰트셋 사용 시도
+    try:
+        plt.rcParams['font.family'] = 'DejaVu Sans'
+        plt.rcParams['axes.unicode_minus'] = False
+        return True
+    except:
+        return False
+
 # 검색어 트렌드 그래프 생성
 async def create_trend_graph(data, keywords):
+    # 한글 폰트 설정 시도
+    font_set = set_korean_font()
+    
     results = data["results"]
     
     # 날짜와 각 키워드별 검색량 데이터 추출
@@ -168,21 +211,41 @@ async def create_trend_graph(data, keywords):
     
     # 그래프 생성
     plt.figure(figsize=(12, 6))
-    for keyword in keywords:
-        plt.plot(dates, values_by_keyword[keyword], marker='o', label=keyword)
     
+    # 날짜 포맷 간소화 (필요시)
+    x_labels = []
+    for date in dates:
+        # YYYY-MM-DD 형식에서 MM-DD만 표시하거나 다른 형식으로 변경
+        try:
+            x_labels.append(date[5:])  # YYYY-MM-DD -> MM-DD
+        except:
+            x_labels.append(date)
+    
+    for keyword in keywords:
+        plt.plot(range(len(dates)), values_by_keyword[keyword], marker='o', label=keyword)
+    
+    # x축 레이블 설정
+    plt.xticks(range(len(dates)), x_labels, rotation=45)
+    
+    # 범례와 제목 등의 텍스트 설정
     plt.title('검색어 트렌드 비교')
     plt.xlabel('기간')
     plt.ylabel('검색량 (상대적 비율)')
     plt.grid(True)
-    plt.legend()
-    plt.xticks(rotation=45)
+    
+    # 한글 폰트 설정에 실패했을 경우 범례 위치 조정
+    if not font_set:
+        plt.legend(loc='upper right', bbox_to_anchor=(1.15, 1))
+    else:
+        plt.legend()
+    
     plt.tight_layout()
     
     # 그래프를 이미지로 저장
     buf = io.BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format='png', dpi=100)
     buf.seek(0)
+    plt.close()  # 메모리 누수 방지
     
     return buf
 
