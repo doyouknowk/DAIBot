@@ -165,7 +165,8 @@ def set_korean_font():
         font_files = [f for f in os.listdir('.') if 'noto' in f.lower() or 'sans' in f.lower()]
         if font_files:
             print(f"Found font files: {font_files}")
-            font_path = f'./{font_files[0]}'  # 첫 번째 발견된 폰트 파일 사용
+            #font_path = f'./{font_files[0]}'  # 첫 번째 발견된 폰트 파일 사용
+            font_path = './NotoSansKR-Regular.ttf'
         else:
             print("No font files found with 'noto' or 'sans' in name")
             font_path = './NotoSansKR-Regular.ttf'  # 기존 경로
