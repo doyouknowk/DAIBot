@@ -156,7 +156,7 @@ async def get_search_trend(keywords, start_date, end_date):
 def set_korean_font():
     try:
         # 프로젝트 내 폰트 파일 경로
-        font_path = './NotoSansKR-VariableFont_wght.ttf'  # 경로
+        font_path = './NotoSansKR-Regular.ttf'  # 경로
         font_prop = fm.FontProperties(fname=font_path)
         plt.rcParams['font.family'] = font_prop.get_name()
         plt.rcParams['axes.unicode_minus'] = False
