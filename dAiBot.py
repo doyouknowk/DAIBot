@@ -174,8 +174,9 @@ def set_korean_font():
 
 # 검색어 트렌드 그래프 생성
 async def create_trend_graph(data, keywords):
-    # 한글 폰트 설정 시도
-    font_set = set_korean_font()
+    # 폰트 객체 직접 생성
+    font_path = './NotoSansKR-Regular.ttf'
+    korean_font = fm.FontProperties(fname=font_path)
     
     results = data["results"]
     
@@ -208,17 +209,14 @@ async def create_trend_graph(data, keywords):
     # x축 레이블 설정
     plt.xticks(range(len(dates)), x_labels, rotation=45)
     
-    # 범례와 제목 등의 텍스트 설정
-    plt.title('검색어 트렌드 비교')
-    plt.xlabel('기간')
-    plt.ylabel('검색량 (상대적 비율)')
+    # 범례와 제목 등의 텍스트 설정 - 여기서 폰트 직접 지정
+    plt.title('검색어 트렌드 비교', fontproperties=korean_font)
+    plt.xlabel('기간', fontproperties=korean_font)
+    plt.ylabel('검색량 (상대적 비율)', fontproperties=korean_font)
     plt.grid(True)
     
-    # 한글 폰트 설정에 실패했을 경우 범례 위치 조정
-    if not font_set:
-        plt.legend(loc='upper right', bbox_to_anchor=(1.15, 1))
-    else:
-        plt.legend()
+    # 범례에도 한글 폰트 적용
+    legend = plt.legend(prop=korean_font)
     
     plt.tight_layout()
     
