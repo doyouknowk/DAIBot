@@ -153,13 +153,30 @@ async def get_search_trend(keywords, start_date, end_date):
         return None
 
 # 트렌드 그래프의 한글 폰트 설정
+# 트렌드 그래프의 한글 폰트 설정
 def set_korean_font():
     try:
-        # 프로젝트 내 폰트 파일 경로
-        font_path = './NotoSansKR-Regular.ttf'  # 경로
+        # 폰트 파일의 정확한 이름 확인
+        import os
+        print(f"Current directory: {os.getcwd()}")
+        print(f"Files in directory: {os.listdir('.')}")
+        
+        # 프로젝트 내 폰트 파일 경로 - 정확한 파일명 사용
+        font_files = [f for f in os.listdir('.') if 'noto' in f.lower() or 'sans' in f.lower()]
+        if font_files:
+            print(f"Found font files: {font_files}")
+            font_path = f'./{font_files[0]}'  # 첫 번째 발견된 폰트 파일 사용
+        else:
+            print("No font files found with 'noto' or 'sans' in name")
+            font_path = './NotoSansKR-Regular.ttf'  # 기존 경로
+        
+        print(f"Using font path: {font_path}")
+        
+        # 폰트 등록
         font_prop = fm.FontProperties(fname=font_path)
         plt.rcParams['font.family'] = font_prop.get_name()
         plt.rcParams['axes.unicode_minus'] = False
+        print(f"Successfully set font: {font_prop.get_name()}")
         return True
     except Exception as e:
         print(f"폰트 설정 오류: {e}")
